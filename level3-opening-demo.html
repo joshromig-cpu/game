@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Level 3 Opening — Sky Creature Demo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;padding:0;background:#0a0a14;overflow:hidden;color:#cfd;font-family:system-ui,sans-serif;}
+  #game{display:block;}
+  #hint{position:fixed;left:10px;bottom:8px;font-size:12px;opacity:.6;pointer-events:none;}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.min.js"></script>
+</head>
+<body>
+<div id="game"></div>
+<div id="hint">WASD / arrows = fly · SPACE = heart beam · SHIFT = dash · R = restart</div>
+<script>
+/* =========================================================================
+   LEVEL 3 OPENING DEMO — Sky Creature
+   - New creature art, frame-interpolated animation
+   - Reactive flight physics
+   - Dark cloud enemy waves (dives strike from above)
+   - Stylized heart beam
+   - Lightning strikes from clouds + lightning aura on hit
+   - Camera zoomed way out
+   ========================================================================= */
+
+const W = window.innerWidth, H = window.innerHeight;
+
+const CREATURE_FRAMES = {
+  idle:     'creature/Recovered Idle.png',
+  glide:    'creature/Middle Glide.png',
+  up:       'creature/Max up stroke.png',
+  down:     'creature/Max down stroke.png',
+  charge:   'creature/charging up.png',
+  fire:     'creature/Firing.png',
+  recoil:   'creature/Attack recoil.png',
+  dive:     'creature/Diving down.png'
+};
+
+class L3Scene extends Phaser.Scene {
+  constructor(){ super('L3'); }
+
+  preload(){
+    for(const k in CREATURE_FRAMES) this.load.image('cr_'+k, 'assets/'+CREATURE_FRAMES[k]);
+  }
+
+  create(){
+    // ---------- WORLD ----------
+    const WORLD_W = 4000, WORLD_H = 2400;
+    this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
+    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+
+    // sky gradient backdrop — fixed to camera, fills viewport
+    const bg = this.add.graphics();
+    bg.fillGradientStyle(0x1a1830, 0x2a1f3a, 0x4a3a55, 0x6a5470, 1);
+    bg.fillRect(-W*2, -H*2, W*4, H*4);
+    bg.setScrollFactor(0);
+    bg.setDepth(-1000);
+
+    // distant cloud silhouettes (parallax)
+    this.distantClouds = this.add.group();
+    for(let i=0;i<24;i++){
+      const cx = Phaser.Math.Between(0, WORLD_W);
+      const cy = Phaser.Math.Between(0, WORLD_H);
+      const c = this.add.graphics();
+      c.fillStyle(0x2c2640, 0.55);
+      const r = Phaser.Math.Between(80, 220);
+      for(let j=0;j<5;j++){
+        c.fillCircle(Phaser.Math.Between(-r*.7,r*.7), Phaser.Math.Between(-r*.3,r*.3), r*Phaser.Math.FloatBetween(.4,.8));
+      }
+      c.x = cx; c.y = cy;
+      c.setScrollFactor(Phaser.Math.FloatBetween(0.2, 0.45));
+      this.distantClouds.add(c);
+    }
+
+    // far storm clouds at top, used as lightning source
+    this.stormCloudsTop = [];
+    for(let i=0;i<12;i++){
+      const sx = (i+0.5) * (WORLD_W/12);
+      const sy = 140 + Phaser.Math.Between(-30, 60);
+      const c = this.add.graphics();
+      c.fillStyle(0x101020, 0.9);
+      for(let j=0;j<7;j++){
+        c.fillCircle(Phaser.Math.Between(-180,180), Phaser.Math.Between(-30,30), Phaser.Math.Between(70,140));
+      }
+      c.x = sx; c.y = sy;
+      c.setScrollFactor(0.6);
+      this.stormCloudsTop.push({g:c, x:sx, y:sy});
+    }
+
+    // ---------- BUILD CLOUD ENEMY TEXTURE (dark version) ----------
+    this.makeDarkCloudTexture();
+    this.makeHeartTexture();
+    this.makeLightningTextures();
+
+    // ---------- PLAYER (rider on creature) ----------
+    this.player = this.physics.add.sprite(WORLD_W/2, WORLD_H/2, 'cr_idle');
+    this.player.setCollideWorldBounds(true);
+    this.player.body.setAllowGravity(false);
+    this.player.setOrigin(0.5, 0.55);
+    this.player.setScale(0.35);   // base scale; art is large
+    this.player.setDepth(50);
+    // tighter hitbox than full sprite
+    this.player.body.setSize(this.player.width*0.45, this.player.height*0.35);
+    this.player.body.setOffset(this.player.width*0.28, this.player.height*0.32);
+
+    // shadow / second layer for cross-fade animation interpolation
+    this.playerNext = this.add.image(this.player.x, this.player.y, 'cr_idle');
+    this.playerNext.setOrigin(0.5, 0.55);
+    this.playerNext.setScale(0.35);
+    this.playerNext.setDepth(50);
+    this.playerNext.setAlpha(0);
+
+    // creature + rider state
+    this.state = {
+      facing: 1,            // 1 right, -1 left
+      currentFrame: 'idle',
+      lastFlap: 0,
+      flapPhase: 0,         // alternates between up/glide/down
+      vx: 0, vy: 0,
+      tvx: 0, tvy: 0,
+      hp: 5,
+      iframes: 0,
+      firing: 0,
+      fireCooldown: 0,
+      dashCooldown: 0
+    };
+
+    // ---------- HEART BEAM POOL ----------
+    this.beams = this.physics.add.group();
+
+    // ---------- ENEMIES ----------
+    this.enemies = this.physics.add.group();
+    this.physics.add.overlap(this.beams, this.enemies, (beam, enemy)=>this.hitEnemy(beam, enemy));
+    this.physics.add.overlap(this.player, this.enemies, (p, enemy)=>this.playerHit(enemy));
+
+    // ---------- LIGHTNING (graphics layer) ----------
+    this.fxLayer = this.add.graphics().setDepth(100);
+    this.auraLayer = this.add.graphics().setDepth(60);
+
+    // ---------- CAMERA — zoom way out ----------
+    this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
+    this.cameras.main.setZoom(0.42);    // zoomed way out so all 40 enemies visible
+
+    // ---------- INPUT ----------
+    this.cursors = this.input.keyboard.createCursorKeys();
+    this.keys = this.input.keyboard.addKeys({
+      W:'W', A:'A', S:'S', D:'D',
+      SPACE:'SPACE', SHIFT:'SHIFT', R:'R'
+    });
+
+    // ---------- WAVES ----------
+    this.waveDef = [1, 3, 6, 10, 16, 25, 40];
+    this.waveIndex = 0;
+    this.waveActive = false;
+    this.waveCleared = 0;
+    this.startWave(0);
+
+    // ---------- PERIODIC LIGHTNING FROM CLOUDS ----------
+    this.time.addEvent({ delay: 2200, loop: true, callback: () => this.cloudLightning() });
+
+    // ---------- HUD ----------
+    this.makeHUD();
+  }
+
+  // ---------- TEXTURE BUILDERS ----------
+  makeDarkCloudTexture(){
+    const g = this.add.graphics();
+    const W=240, H=140;
+    g.fillStyle(0x1b1428, 1);
+    [[60,80,55],[110,55,70],[170,70,60],[200,95,50],[140,100,65],[90,105,45]].forEach(([x,y,r])=>{
+      g.fillCircle(x,y,r);
+    });
+    g.fillStyle(0x2a1f3a, 1);
+    [[80,70,30],[140,55,28],[190,80,32]].forEach(([x,y,r])=>g.fillCircle(x,y,r));
+    // glowing red eyes
+    g.fillStyle(0xff3344, 1);
+    g.fillCircle(110,80,7);
+    g.fillCircle(160,80,7);
+    g.fillStyle(0xffe0c0, 1);
+    g.fillCircle(110,80,2.5);
+    g.fillCircle(160,80,2.5);
+    g.generateTexture('darkCloud', W, H);
+    g.destroy();
+  }
+
+  makeHeartTexture(){
+    const g = this.add.graphics();
+    const S=64;
+    // glow
+    g.fillStyle(0xff5a8a, 0.35);
+    g.fillCircle(S/2, S/2, 30);
+    g.fillStyle(0xff8bb6, 0.55);
+    g.fillCircle(S/2, S/2, 20);
+    // heart shape
+    g.fillStyle(0xff2e6b, 1);
+    g.fillCircle(S/2-7, S/2-3, 10);
+    g.fillCircle(S/2+7, S/2-3, 10);
+    g.fillTriangle(S/2-15, S/2+1, S/2+15, S/2+1, S/2, S/2+18);
+    // bright core
+    g.fillStyle(0xffd6e4, 0.9);
+    g.fillCircle(S/2-5, S/2-5, 3);
+    g.generateTexture('heart', S, S);
+    g.destroy();
+  }
+
+  makeLightningTextures(){
+    // small spark texture for particles
+    const g = this.add.graphics();
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(4, 4, 3);
+    g.generateTexture('spark', 8, 8);
+    g.destroy();
+  }
+
+  makeHUD(){
+    this.hudText = this.add.text(16, 12, '', {
+      fontSize:'18px', color:'#ffe6f0',
+      fontFamily:'system-ui', stroke:'#000', strokeThickness:3
+    }).setScrollFactor(0).setDepth(1000);
+
+    this.heartHUD = this.add.graphics().setScrollFactor(0).setDepth(1000);
+  }
+
+  drawHearts(){
+    this.heartHUD.clear();
+    for(let i=0;i<5;i++){
+      const x = 22 + i*30, y = 50;
+      this.heartHUD.fillStyle(i < this.state.hp ? 0xff2e6b : 0x442230, 1);
+      this.heartHUD.fillCircle(x-5, y-2, 7);
+      this.heartHUD.fillCircle(x+5, y-2, 7);
+      this.heartHUD.fillTriangle(x-12, y, x+12, y, x, y+13);
+    }
+  }
+
+  // ---------- WAVE MANAGER ----------
+  startWave(i){
+    this.waveIndex = i;
+    if(i >= this.waveDef.length){
+      this.waveActive = false;
+      this.bigText('YOU CLEARED THE STORM');
+      return;
+    }
+    const count = this.waveDef[i];
+    this.waveActive = true;
+    this.waveSpawned = 0;
+    this.waveExpected = count;
+    this.bigText('WAVE ' + (i+1) + ' — ' + count + ' enemies');
+    // spawn over a window so they trickle in
+    for(let n=0;n<count;n++){
+      this.time.delayedCall(n*Phaser.Math.Between(80, 220), ()=>{
+        this.spawnEnemy();
+        this.waveSpawned++;
+      });
+    }
+  }
+
+  spawnEnemy(){
+    const side = Phaser.Math.Between(0,3);
+    const WW = this.physics.world.bounds.width, WH = this.physics.world.bounds.height;
+    let x, y;
+    if(side===0){ x=-100; y=Phaser.Math.Between(80, WH-200); }
+    else if(side===1){ x=WW+100; y=Phaser.Math.Between(80, WH-200); }
+    else if(side===2){ x=Phaser.Math.Between(80, WW-80); y=-100; }
+    else            { x=Phaser.Math.Between(80, WW-80); y=WH+100; }
+
+    const e = this.physics.add.image(x, y, 'darkCloud');
+    e.setScale(Phaser.Math.FloatBetween(0.55, 0.95));
+    e.body.setAllowGravity(false);
+    e.setDepth(45);
+    e.setData('hp', 2);
+    e.setData('mode', 'approach');
+    e.setData('strikeCD', Phaser.Math.Between(800, 2200));
+    e.setData('floatPhase', Math.random()*Math.PI*2);
+    // bob tween
+    this.tweens.add({
+      targets: e, scaleX: e.scaleX*1.05, scaleY: e.scaleY*0.95,
+      duration: 700+Math.random()*400, yoyo:true, repeat:-1, ease:'Sine.easeInOut'
+    });
+    this.enemies.add(e);
+  }
+
+  bigText(msg){
+    const t = this.add.text(W/2, 80, msg, {
+      fontSize:'34px', color:'#ffd9e8', stroke:'#220011', strokeThickness:5,
+      fontFamily:'system-ui'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2000);
+    this.tweens.add({ targets:t, alpha:0, y:60, duration:2200, delay:600, onComplete:()=>t.destroy() });
+  }
+
+  // ---------- PER-FRAME ----------
+  update(time, dms){
+    const dt = dms/1000;
+    this.handleInput(dt);
+    this.movePlayer(dt);
+    this.animateCreature(time);
+    this.updateEnemies(time, dt);
+    this.updateBeams();
+    this.fxLayer.clear();
+    this.drawHitAura();
+    this.drawHearts();
+    this.hudText.setText(`WAVE ${this.waveIndex+1}/${this.waveDef.length}   enemies left: ${this.enemies.countActive(true)}`);
+
+    // wave clear check — only after all spawned AND none alive
+    if(this.waveActive
+       && this.waveSpawned >= this.waveExpected
+       && this.enemies.countActive(true) === 0
+       && this.waveCleared !== this.waveIndex){
+      this.waveCleared = this.waveIndex;
+      this.time.delayedCall(1400, ()=>this.startWave(this.waveIndex+1));
+    }
+
+    if(Phaser.Input.Keyboard.JustDown(this.keys.R)) this.scene.restart();
+  }
+
+  // ---------- INPUT → reactive target velocity ----------
+  handleInput(dt){
+    const s = this.state;
+    let ix=0, iy=0;
+    if(this.cursors.left.isDown || this.keys.A.isDown) ix-=1;
+    if(this.cursors.right.isDown || this.keys.D.isDown) ix+=1;
+    if(this.cursors.up.isDown || this.keys.W.isDown) iy-=1;
+    if(this.cursors.down.isDown || this.keys.S.isDown) iy+=1;
+
+    const len = Math.hypot(ix,iy) || 1;
+    ix/=len; iy/=len;
+
+    const MAX = 460;
+    const DASH = (this.keys.SHIFT.isDown && s.dashCooldown<=0) ? 1.85 : 1.0;
+    if(DASH>1 && s.dashCooldown<=0 && (ix||iy)){
+      s.dashCooldown = 0.6;
+      this.cameras.main.shake(120, 0.004);
+    }
+    s.dashCooldown = Math.max(0, s.dashCooldown - dt);
+
+    s.tvx = ix * MAX * DASH;
+    s.tvy = iy * MAX * DASH;
+    if(ix !== 0) s.facing = ix > 0 ? 1 : -1;
+
+    // FIRE
+    s.fireCooldown = Math.max(0, s.fireCooldown - dt);
+    if(this.keys.SPACE.isDown && s.fireCooldown<=0){
+      this.fireBeam();
+      s.fireCooldown = 0.22;
+      s.firing = 0.18;
+    }
+    s.firing = Math.max(0, s.firing - dt);
+  }
+
+  movePlayer(dt){
+    const s = this.state;
+    // reactive lerp — high responsiveness, but still has weight
+    const RESP = 7.5;       // higher = snappier
+    s.vx += (s.tvx - s.vx) * Math.min(1, RESP*dt);
+    s.vy += (s.tvy - s.vy) * Math.min(1, RESP*dt);
+    // slight drift if no input (lets you coast — feels alive)
+    if(s.tvx===0) s.vx *= Math.pow(0.985, dt*60);
+    if(s.tvy===0) s.vy *= Math.pow(0.985, dt*60);
+
+    this.player.body.setVelocity(s.vx, s.vy);
+    this.playerNext.x = this.player.x;
+    this.playerNext.y = this.player.y;
+
+    // tilt creature based on vertical movement (visual feedback)
+    const tilt = Phaser.Math.Clamp(s.vy / 800, -0.35, 0.35);
+    this.player.rotation = tilt * s.facing;
+    this.playerNext.rotation = this.player.rotation;
+
+    // facing flip
+    const sx = 0.35 * s.facing;
+    this.player.setScale(sx, 0.35);
+    this.playerNext.setScale(sx, 0.35);
+
+    // iframes
+    s.iframes = Math.max(0, s.iframes - dt);
+    if(s.iframes>0){
+      const blink = (Math.floor(s.iframes*20)%2===0) ? 1 : 0.35;
+      this.player.setAlpha(blink);
+    } else {
+      this.player.setAlpha(1);
+    }
+  }
+
+  // ---------- CREATURE ANIMATION (cross-fade between hand-drawn frames) ----------
+  setFrame(name, fadeMs=180){
+    if(this.state.currentFrame === name) return;
+    // current → playerNext, then fade old (player) to new
+    const cur = this.player.texture.key;
+    this.playerNext.setTexture(cur);
+    this.playerNext.setAlpha(1);
+    this.player.setTexture('cr_'+name);
+    this.player.setAlpha(0);
+    this.tweens.killTweensOf([this.player, this.playerNext]);
+    this.tweens.add({ targets:this.player, alpha:1, duration:fadeMs, ease:'Sine.easeOut' });
+    this.tweens.add({ targets:this.playerNext, alpha:0, duration:fadeMs, ease:'Sine.easeIn' });
+    this.state.currentFrame = name;
+  }
+
+  animateCreature(time){
+    const s = this.state;
+    const speed = Math.hypot(s.vx, s.vy);
+    let frame = 'idle';
+
+    if(s.firing > 0.10) frame = 'charge';
+    else if(s.firing > 0) frame = 'fire';
+    else if(s.fireCooldown > 0.15 && s.fireCooldown < 0.22) frame = 'recoil';
+    else if(s.vy > 280) frame = 'dive';
+    else if(speed < 35) frame = 'idle';
+    else {
+      // flapping cycle when moving
+      const phase = Math.floor((time/220) % 3);
+      frame = ['up','glide','down'][phase];
+    }
+    this.setFrame(frame, 160);
+
+    // gentle bob even when idle (sub-frame motion = feels interpolated)
+    const bob = Math.sin(time/420) * 4;
+    if(s.currentFrame === 'idle'){
+      this.player.y = this.player.body.y + this.player.body.height*0.55 + bob*0.5;
+    }
+  }
+
+  // ---------- HEART BEAM ----------
+  fireBeam(){
+    const s = this.state;
+    const ox = this.player.x + (s.facing*120);
+    const oy = this.player.y + 4;
+
+    // main heart projectile
+    const heart = this.physics.add.image(ox, oy, 'heart');
+    heart.setDepth(70);
+    heart.setScale(1.0);
+    heart.body.setAllowGravity(false);
+    heart.body.setVelocity(s.facing * 1100 + s.vx*0.5, s.vy*0.3);
+    heart.setData('damage', 1);
+    heart.setData('born', this.time.now);
+    this.beams.add(heart);
+
+    // pulse + trailing growth
+    this.tweens.add({ targets:heart, scale:1.5, duration:260, yoyo:true, repeat:-1, ease:'Sine.easeInOut'});
+
+    // secondary smaller heart particles trailing
+    const emitter = this.add.particles(ox, oy, 'heart', {
+      speed: { min:60, max:200 },
+      angle: s.facing>0 ? { min: -18, max:18 } : { min: 162, max: 198 },
+      scale: { start:0.45, end:0.0 },
+      alpha: { start:0.85, end:0 },
+      lifespan: 520,
+      frequency: 18,
+      tint: [0xff6aa3, 0xffb6d4, 0xff2e6b]
+    }).setDepth(69);
+    heart.setData('emitter', emitter);
+
+    // glow ring at muzzle
+    const ring = this.add.circle(ox, oy, 18, 0xff6aa3, 0.6).setDepth(68);
+    this.tweens.add({ targets:ring, radius:80, alpha:0, duration:380, onComplete:()=>ring.destroy() });
+
+    // tiny sparkle particles forward
+    const sparks = this.add.particles(ox, oy, 'spark', {
+      speed: { min:120, max:340 },
+      angle: s.facing>0 ? { min:-30, max:30 } : { min:150, max:210 },
+      scale: { start:0.9, end:0 },
+      alpha: { start:1, end:0 },
+      lifespan: 380,
+      tint: [0xffe1ee, 0xff7fb0]
+    }).setDepth(72);
+    this.time.delayedCall(180, ()=>sparks.destroy());
+
+    this.cameras.main.shake(60, 0.0025);
+  }
+
+  updateBeams(){
+    const now = this.time.now;
+    this.beams.children.iterate(b=>{
+      if(!b) return;
+      // emitter follow
+      const em = b.getData('emitter');
+      if(em){ em.setPosition(b.x, b.y); }
+      if(now - b.getData('born') > 1400){
+        if(em) em.destroy();
+        b.destroy();
+      }
+    });
+  }
+
+  hitEnemy(beam, enemy){
+    const hp = enemy.getData('hp') - 1;
+    enemy.setData('hp', hp);
+    // hit flash
+    enemy.setTint(0xffffff);
+    this.time.delayedCall(60, ()=>enemy.clearTint && enemy.clearTint());
+    // hit sparkles
+    const burst = this.add.particles(beam.x, beam.y, 'heart', {
+      speed:{min:40,max:240}, scale:{start:0.6, end:0}, alpha:{start:1,end:0},
+      lifespan:420, quantity:6, tint:[0xff6aa3,0xffd6e4]
+    }).setDepth(80);
+    this.time.delayedCall(420, ()=>burst.destroy());
+
+    const em = beam.getData('emitter');
+    if(em) em.destroy();
+    beam.destroy();
+
+    if(hp<=0){
+      // dissolve
+      const x=enemy.x, y=enemy.y;
+      const puff = this.add.particles(x, y, 'darkCloud', {
+        speed:{min:30, max:120}, scale:{start:0.4, end:0}, alpha:{start:0.6,end:0},
+        lifespan:520, quantity:8
+      }).setDepth(46);
+      this.time.delayedCall(540, ()=>puff.destroy());
+      enemy.destroy();
+    }
+  }
+
+  // ---------- ENEMY BEHAVIOR ----------
+  updateEnemies(time, dt){
+    const px = this.player.x, py = this.player.y;
+    this.enemies.children.iterate(e=>{
+      if(!e || !e.active) return;
+      const dx = px - e.x, dy = py - e.y;
+      const dist = Math.hypot(dx,dy);
+      const mode = e.getData('mode');
+
+      if(mode === 'approach'){
+        // glide toward area above the player
+        const targetX = px + Phaser.Math.Between(-60, 60);
+        const targetY = py - Phaser.Math.Between(160, 320);
+        const ax = (targetX - e.x), ay = (targetY - e.y);
+        const al = Math.hypot(ax,ay)||1;
+        const SPD = 95 + this.waveIndex*8;
+        e.body.setVelocity(ax/al*SPD + Math.sin(time/700+e.getData('floatPhase'))*30,
+                           ay/al*SPD + Math.cos(time/600+e.getData('floatPhase'))*20);
+        // when above + in horizontal range, prepare strike
+        if(e.y < py - 120 && Math.abs(e.x - px) < 140){
+          let cd = e.getData('strikeCD') - dt*1000;
+          if(cd <= 0){
+            e.setData('mode','strike');
+            e.setData('strikeT', 0);
+          } else e.setData('strikeCD', cd);
+        }
+      } else if(mode === 'strike'){
+        // streak straight down with lightning telegraph
+        let t = e.getData('strikeT') + dt;
+        e.setData('strikeT', t);
+        if(t < 0.35){
+          e.body.setVelocity(0, -40); // pause + windup
+          // telegraph flicker
+          e.setTint(t%0.1<0.05 ? 0xff5566 : 0xffffff);
+          // draw warning line
+          this.fxLayer.lineStyle(3, 0xff3344, 0.55);
+          this.fxLayer.lineBetween(e.x, e.y+30, e.x, e.y+1400);
+        } else if(t < 1.1){
+          e.clearTint();
+          e.body.setVelocity(0, 1200);
+          // lightning bolt visual
+          this.drawLightning(e.x, e.y, e.x, e.y + 1500, 0x9fb6ff);
+        } else {
+          // recover
+          e.setData('mode', 'approach');
+          e.setData('strikeCD', Phaser.Math.Between(1400, 2800));
+        }
+      }
+    });
+  }
+
+  // ---------- LIGHTNING DRAWING ----------
+  drawLightning(x1,y1,x2,y2, color=0xbcd4ff, width=4){
+    const segs = 14;
+    const pts = [];
+    for(let i=0;i<=segs;i++){
+      const t = i/segs;
+      const jitter = (i===0||i===segs) ? 0 : Phaser.Math.Between(-30, 30);
+      pts.push([Phaser.Math.Linear(x1,x2,t)+jitter, Phaser.Math.Linear(y1,y2,t)+Phaser.Math.Between(-12,12)]);
+    }
+    // outer glow
+    this.fxLayer.lineStyle(width+8, color, 0.18);
+    for(let i=0;i<pts.length-1;i++) this.fxLayer.lineBetween(pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1]);
+    // mid
+    this.fxLayer.lineStyle(width+3, color, 0.55);
+    for(let i=0;i<pts.length-1;i++) this.fxLayer.lineBetween(pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1]);
+    // bright core
+    this.fxLayer.lineStyle(width, 0xffffff, 1);
+    for(let i=0;i<pts.length-1;i++) this.fxLayer.lineBetween(pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1]);
+  }
+
+  cloudLightning(){
+    // pick a random storm cloud and zap below it
+    const c = Phaser.Utils.Array.GetRandom(this.stormCloudsTop);
+    if(!c) return;
+    const sx = c.x;
+    const sy = c.y + 30;
+    const ex = sx + Phaser.Math.Between(-80, 80);
+    const ey = this.physics.world.bounds.height - 200;
+    // flash
+    const flash = this.add.rectangle(W/2, H/2, W, H, 0xffffff, 0.18).setScrollFactor(0).setDepth(999);
+    this.tweens.add({ targets:flash, alpha:0, duration:240, onComplete:()=>flash.destroy() });
+
+    // draw 3 frames of bolt fading
+    let frame=0;
+    const tick = ()=>{
+      this.fxLayer.clear();
+      this.drawLightning(sx, sy, ex, ey, 0xc8d4ff, 5);
+      frame++;
+      if(frame<3) this.time.delayedCall(60, tick);
+    };
+    tick();
+  }
+
+  // ---------- PLAYER DAMAGE + AURA ----------
+  playerHit(enemy){
+    const s = this.state;
+    if(s.iframes > 0) return;
+    s.hp = Math.max(0, s.hp - 1);
+    s.iframes = 1.2;
+    this.cameras.main.shake(220, 0.012);
+    this.cameras.main.flash(180, 200, 220, 255);
+
+    // knockback + lightning aura burst (drawn for 0.7s via state)
+    const dx = this.player.x - enemy.x, dy = this.player.y - enemy.y;
+    const m = Math.hypot(dx,dy)||1;
+    s.vx += (dx/m)*420;
+    s.vy += (dy/m)*420 - 120;
+
+    s.auraT = 0.7;
+
+    if(s.hp <= 0){
+      this.bigText('FALLEN — press R to retry');
+      s.iframes = 9999;
+    }
+  }
+
+  drawHitAura(){
+    const s = this.state;
+    if(!s.auraT || s.auraT<=0) return;
+    s.auraT -= 1/60;
+    const cx = this.player.x, cy = this.player.y;
+    const t = s.auraT;            // 0.7..0
+    const intensity = Math.min(1, t/0.7);
+    const arms = 10;
+    for(let i=0;i<arms;i++){
+      const ang = (i/arms)*Math.PI*2 + (this.time.now/300);
+      const len = 100 + Math.sin(this.time.now/80 + i)*30 + (1-intensity)*60;
+      this.drawLightning(cx, cy, cx + Math.cos(ang)*len, cy + Math.sin(ang)*len, 0x9ec6ff, 3);
+    }
+    // ring
+    this.fxLayer.lineStyle(4, 0xc8d4ff, 0.55*intensity);
+    this.fxLayer.strokeCircle(cx, cy, 90 + (1-intensity)*60);
+    this.fxLayer.lineStyle(2, 0xffffff, 0.85*intensity);
+    this.fxLayer.strokeCircle(cx, cy, 60);
+  }
+}
+
+const config = {
+  type: Phaser.AUTO,
+  width: W, height: H,
+  parent: 'game',
+  backgroundColor: '#0a0a14',
+  physics: { default:'arcade', arcade:{ gravity:{y:0}, debug:false } },
+  scene: [L3Scene],
+  scale: { mode: Phaser.Scale.RESIZE }
+};
+window.__game = new Phaser.Game(config);
+</script>
+</body>
+</html>

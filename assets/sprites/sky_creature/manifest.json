@@ -1,0 +1,114 @@
+{
+  "rider": [
+    {
+      "label": "standard",
+      "file": "rider_standard.png",
+      "w": 809,
+      "h": 351
+    },
+    {
+      "label": "relaxed_glide",
+      "file": "rider_relaxed_glide.png",
+      "w": 811,
+      "h": 282
+    },
+    {
+      "label": "hard_climb",
+      "file": "rider_hard_climb.png",
+      "w": 672,
+      "h": 351
+    },
+    {
+      "label": "banking_left",
+      "file": "rider_banking_left.png",
+      "w": 742,
+      "h": 350
+    },
+    {
+      "label": "diving",
+      "file": "rider_diving.png",
+      "w": 651,
+      "h": 352
+    },
+    {
+      "label": "banking_right",
+      "file": "rider_banking_right.png",
+      "w": 744,
+      "h": 324
+    },
+    {
+      "label": "attack_recoil",
+      "file": "rider_attack_recoil.png",
+      "w": 735,
+      "h": 344
+    },
+    {
+      "label": "key_interaction",
+      "file": "rider_key_interaction.png",
+      "w": 704,
+      "h": 351
+    },
+    {
+      "label": "hover_landing",
+      "file": "rider_hover_landing.png",
+      "w": 599,
+      "h": 351
+    }
+  ],
+  "beam": [
+    {
+      "label": "beam_charging",
+      "file": "beam_beam_charging.png",
+      "w": 697,
+      "h": 424
+    },
+    {
+      "label": "beam_firing_start",
+      "file": "beam_beam_firing_start.png",
+      "w": 678,
+      "h": 378
+    },
+    {
+      "label": "beam_firing_full",
+      "file": "beam_beam_firing_full.png",
+      "w": 713,
+      "h": 393
+    },
+    {
+      "label": "beam_firing_sustain",
+      "file": "beam_beam_firing_sustain.png",
+      "w": 727,
+      "h": 365
+    },
+    {
+      "label": "beam_dissipating",
+      "file": "beam_beam_dissipating.png",
+      "w": 697,
+      "h": 364
+    },
+    {
+      "label": "beam_recovered",
+      "file": "beam_beam_recovered.png",
+      "w": 686,
+      "h": 356
+    },
+    {
+      "label": "wing_middle_glide",
+      "file": "beam_wing_middle_glide.png",
+      "w": 742,
+      "h": 381
+    },
+    {
+      "label": "wing_max_down",
+      "file": "beam_wing_max_down.png",
+      "w": 686,
+      "h": 400
+    },
+    {
+      "label": "wing_max_up",
+      "file": "beam_wing_max_up.png",
+      "w": 646,
+      "h": 400
+    }
+  ]
+}

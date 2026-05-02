@@ -1,0 +1,1592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sky Creature — Level 3 Opening</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  html, body { margin: 0; padding: 0; background: #000; height: 100%; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: #fff; }
+  #game { position: absolute; inset: 0; }
+
+  /* MP4 intro overlay */
+  #intro {
+    position: absolute; inset: 0; z-index: 100;
+    background: #000; display: flex; align-items: center; justify-content: center;
+    opacity: 1; transition: opacity 800ms ease;
+  }
+  #intro.hidden { opacity: 0; pointer-events: none; }
+  #intro video {
+    width: 100%; height: 100%; object-fit: cover;
+  }
+  #intro-skip {
+    position: absolute; top: 16px; right: 16px;
+    background: rgba(255,255,255,0.12); color: #fff;
+    border: 1px solid rgba(255,255,255,0.3); border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer;
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  #intro-skip:hover { background: rgba(255,255,255,0.2); }
+
+  /* Comic-book speech bubble over the MP4 */
+  #help-bubble {
+    position: absolute;
+    top: 8%; left: 18%;
+    transform: rotate(-2deg);
+    z-index: 103;
+    background: #fff;
+    color: #111;
+    border: 3px solid #111;
+    border-radius: 12px;
+    padding: 12px 22px;
+    font-family: "Comic Sans MS", "Marker Felt", "Bangers", sans-serif;
+    font-weight: 900;
+    font-size: 46px;
+    letter-spacing: 2px;
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.25);
+    opacity: 0;
+    transition: opacity 220ms ease;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  #help-bubble.show {
+    opacity: 1;
+    animation: shake 380ms ease-in-out 0s 3 alternate;
+  }
+  /* Tail points DOWN-LEFT toward creature's head */
+  #help-bubble:after {
+    content: "";
+    position: absolute;
+    bottom: -24px;
+    left: 22%;
+    width: 0; height: 0;
+    border-left: 10px solid transparent;
+    border-right: 22px solid transparent;
+    border-top: 26px solid #111;
+  }
+  #help-bubble:before {
+    content: "";
+    position: absolute;
+    bottom: -19px;
+    left: 23%;
+    width: 0; height: 0;
+    border-left: 7px solid transparent;
+    border-right: 18px solid transparent;
+    border-top: 21px solid #fff;
+    z-index: 1;
+  }
+  @keyframes shake {
+    0%   { transform: rotate(-3deg) scale(1.00); }
+    50%  { transform: translateY(-2px) rotate(-1deg) scale(1.04); }
+    100% { transform: translateY(1px) rotate(-4deg) scale(1.00); }
+  }
+
+  .lb {
+    position: absolute; left: 0; right: 0; height: 8vh;
+    background: #000; z-index: 101; pointer-events: none;
+  }
+  .lb-top { top: 0; }
+  .lb-bot { bottom: 0; }
+</style>
+</head>
+<body>
+  <div id="game"></div>
+
+  <!-- MP4 intro overlay (plays before the Phaser cinematic) -->
+  <div id="intro">
+    <div class="lb lb-top"></div>
+    <video id="intro-video" playsinline muted preload="auto" autoplay>
+      <source src="../assets/video/sky_creature_intro.mp4" type="video/mp4">
+    </video>
+    <div class="lb lb-bot"></div>
+    <div id="help-bubble">HELP! HELP!</div>
+    <button id="intro-skip" type="button">skip ▶</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.min.js"></script>
+  <script>
+  // ============================================================
+  // ASSET PATHS  (new individual-render set: sky_creature_v2)
+  // ============================================================
+  const V2 = "../assets/sprites/sky_creature_v2";
+  const POSE = {
+    idle:        `${V2}/recovered_idle.png`,
+    glide:       `${V2}/middle_glide.png`,
+    up_stroke:   `${V2}/max_up_stroke.png`,
+    down_stroke: `${V2}/max_down_stroke.png`,
+    dive:        `${V2}/diving_down.png`,
+    recoil:      `${V2}/attack_recoil.png`,
+    charging:    `${V2}/charging_up.png`,
+    firing:      `${V2}/firing.png`,
+  };
+  const ENCOUNTER = "../assets/sprites/sky_creature/encounter_scene.png";
+
+  // ============================================================
+  // CINEMATIC SCENE — Level 3 opening, above-the-clouds first contact
+  // ============================================================
+  class CinematicScene extends Phaser.Scene {
+    constructor() { super("Cinematic"); }
+
+    create() {
+      const W = this.scale.width, H = this.scale.height;
+
+      this._buildSky(W, H);
+
+      const enc = this.add.image(W * 0.5, H * 0.55, "encounter");
+      const targetH = H * 0.78;
+      enc.setScale(targetH / enc.height);
+      enc.setAlpha(0);
+      this.encArt = enc;
+
+      const bar = 60;
+      this.barTop = this.add.rectangle(W / 2, -bar / 2, W, bar, 0x000000).setDepth(50);
+      this.barBot = this.add.rectangle(W / 2, H + bar / 2, W, bar, 0x000000).setDepth(50);
+
+      // Title card — now reframed as Level 3 opening
+      this.title = this.add.text(W / 2, H / 2 - 30, "Level 3", {
+        fontFamily: "serif", fontSize: "30px", fontStyle: "italic",
+        color: "#36456e", stroke: "#ffffff", strokeThickness: 3,
+      }).setOrigin(0.5).setAlpha(0).setDepth(60);
+      this.subtitle = this.add.text(W / 2, H / 2 + 18, "Somewhere above the Nimbus Nebula…", {
+        fontFamily: "serif", fontSize: "44px", fontStyle: "italic",
+        color: "#1f1830", stroke: "#ffffff", strokeThickness: 4,
+      }).setOrigin(0.5).setAlpha(0).setDepth(60);
+
+      // Speech bubble dialog UI
+      this.bubbleGfx = this.add.graphics().setDepth(60);
+      this.dialogName = this.add.text(0, 0, "", {
+        fontFamily: "serif", fontSize: "19px", color: "#fff099", fontStyle: "italic bold",
+      }).setDepth(61).setAlpha(0);
+      this.dialogText = this.add.text(0, 0, "", {
+        fontFamily: "serif", fontSize: "21px", color: "#ffffff", wordWrap: { width: W * 0.42 },
+      }).setDepth(61).setAlpha(0);
+      this.dialogHint = this.add.text(W - 24, H - 22, "▶ space / click", {
+        fontFamily: "sans-serif", fontSize: "13px", color: "#aab8ff", fontStyle: "italic",
+      }).setOrigin(1, 0.5).setDepth(61).setAlpha(0);
+      this._bubbleW = W; this._bubbleH = H;
+
+      this.skipBtn = this.add.text(W - 16, 16, "skip ▶", {
+        fontFamily: "sans-serif", fontSize: "14px",
+        color: "#ffffff", backgroundColor: "#0a1130aa", padding: { x: 8, y: 4 },
+      }).setOrigin(1, 0).setDepth(70).setInteractive({ useHandCursor: true });
+      this.skipBtn.on("pointerdown", () => this._skipToFlight());
+
+      // Dialog script — now Level-3 framed: storms gather, dark clouds advancing
+      this.script = [
+        { who: "Creature", line: "Help… help…" },
+        { who: "Creature", line: "The clouds are turning dark and they're hunting me — up through the Nimbus Nebula. I've been escaping just barely. At first I destroyed them one by one, but now I'm too scared to face them in their numbers." },
+        { who: "Luna",     line: "I've been fighting them too. And don't you worry — you're not alone in your fear…" },
+        { who: "Creature", line: "Come with me. I think I have a place we can hide — amongst the Cumulonimbus walls of Serhn Deyre." },
+        { who: "Luna",     line: "NO. There's no more running. They're growing in numbers as we speak. You must help me retrieve the last colour. Bow down to the Key of my people. Let us ride into the night…" },
+      ];
+      this.scriptIndex = -1;
+      this.dialogActive = false;
+
+      this.input.keyboard.on("keydown-SPACE", () => this._advance());
+      this.input.keyboard.on("keydown-ENTER", () => this._advance());
+      this.input.keyboard.on("keydown-S", () => this._skipToFlight());
+      this.input.on("pointerdown", (p) => {
+        if (p.y < 40 && p.x > W - 80) return;
+        this._advance();
+      });
+
+      this._sequence();
+    }
+
+    _buildSky(W, H) {
+      // Start as bright white cloud field; we will fade to black during the dialog.
+      const bg = this.add.rectangle(W / 2, H / 2, W * 1.2, H * 1.2, 0xffffff, 1).setDepth(0);
+      this.bgRect = bg;
+
+      // Soft white cloud puffs
+      const cloudLayer = this.add.container(0, 0).setDepth(1);
+      this.cloudLayer = cloudLayer;
+      for (let i = 0; i < 24; i++) {
+        const x = Phaser.Math.Between(0, W);
+        const y = Phaser.Math.Between(H * 0.05, H * 1.0);
+        const r = Phaser.Math.Between(80, 240);
+        const c = this.add.circle(x, y, r, 0xf3f3ff, 0.45 + Math.random() * 0.25);
+        cloudLayer.add(c);
+        this.tweens.add({
+          targets: c,
+          x: x + Phaser.Math.Between(-60, 60),
+          duration: Phaser.Math.Between(8000, 14000),
+          yoyo: true, repeat: -1,
+          ease: "Sine.inOut",
+        });
+      }
+    }
+
+    _darkenSkyOverDialog() {
+      // Tween bg from white to deep storm-black; clouds fade with it.
+      // Manual color tween (Phaser rectangles don't tween fillColor numerically)
+      const c0 = Phaser.Display.Color.HexStringToColor("#ffffff");
+      const c1 = Phaser.Display.Color.HexStringToColor("#07060a");
+      this.tweens.addCounter({
+        from: 0, to: 1, duration: 28000, ease: "Sine.inOut",
+        onUpdate: (tw) => {
+          const t = tw.getValue();
+          const c = Phaser.Display.Color.Interpolate.ColorWithColor(c0, c1, 1, t);
+          this.bgRect.fillColor = Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+          // Fade cloud layer
+          this.cloudLayer.setAlpha(1 - t * 0.95);
+        },
+      });
+    }
+
+    _sequence() {
+      this.tweens.add({ targets: [this.title, this.subtitle], alpha: 1, duration: 1100, ease: "Sine.inOut" });
+      this.tweens.add({ targets: this.barTop, y: 30, duration: 700, ease: "Sine.out" });
+      this.tweens.add({ targets: this.barBot, y: this.scale.height - 30, duration: 700, ease: "Sine.out" });
+
+      this.time.delayedCall(1700, () => {
+        this.tweens.add({ targets: [this.title, this.subtitle], alpha: 0, duration: 600 });
+        this.tweens.add({ targets: this.encArt, alpha: 1, duration: 1000 });
+      });
+
+      this.time.delayedCall(2700, () => {
+        this.dialogActive = true;
+        this.tweens.add({ targets: [this.dialogName, this.dialogText, this.dialogHint], alpha: 1, duration: 400 });
+        this._darkenSkyOverDialog();
+        this._advance();
+      });
+    }
+
+    _advance() {
+      if (!this.dialogActive) return;
+      if (this._typing) {
+        this._typing.remove();
+        this._typing = null;
+        this.dialogText.setText(this._typingTarget);
+        return;
+      }
+      this.scriptIndex++;
+      if (this.scriptIndex >= this.script.length) {
+        return this._endCinematic();
+      }
+      const beat = this.script[this.scriptIndex];
+      this.dialogName.setText(beat.who ? beat.who + ":" : "");
+      this.dialogText.setText("");
+      this._typingTarget = beat.line;
+      this._drawBubble(beat.who);
+      let i = 0;
+      this._typing = this.time.addEvent({
+        delay: 18,
+        repeat: this._typingTarget.length - 1,
+        callback: () => {
+          i++;
+          this.dialogText.setText(this._typingTarget.slice(0, i));
+        },
+      });
+      this._typing.callbackScope = this;
+      this._typing.completeCallback = () => { this._typing = null; };
+    }
+
+    _drawBubble(who) {
+      const W = this._bubbleW, H = this._bubbleH;
+      const isCreature = (who === "Creature" || who === "");
+      // Bubbles sit in the upper sky, ABOVE the characters — comic book style.
+      // Creature occupies the left half of the art; Luna is on the right.
+      const bubW = W * 0.40;
+      const bubH = 155;
+      const pad = 16;
+      const r = 14;
+      const bx = isCreature ? 24 : W - 24 - bubW;
+      const by = 18;
+
+      // Where the tail tip points (down toward character's head)
+      // Tail tip points to BACK of each character's head
+      // Creature faces right → back of head is on the far left
+      // Luna faces left → back of head is on the far right
+      const tipX = isCreature ? W * 0.04 : W * 0.93;
+      const tipY = H * 0.38;
+      // Tail base on the near-edge of each bubble (inward side toward the tip)
+      const tailBaseX = isCreature ? bx + 20 : bx + bubW - 20;
+
+      this.bubbleGfx.clear();
+      // Drop shadow
+      this.bubbleGfx.fillStyle(0x000000, 0.28);
+      this.bubbleGfx.fillRoundedRect(bx + 4, by + 4, bubW, bubH, r);
+      // White fill — classic comic style
+      this.bubbleGfx.fillStyle(0xffffff, 0.97);
+      this.bubbleGfx.fillRoundedRect(bx, by, bubW, bubH, r);
+      // Black border
+      this.bubbleGfx.lineStyle(3, 0x111111, 1);
+      this.bubbleGfx.strokeRoundedRect(bx, by, bubW, bubH, r);
+      // Tail — points down to character head
+      this.bubbleGfx.fillStyle(0xffffff, 0.97);
+      this.bubbleGfx.fillTriangle(tailBaseX - 16, by + bubH, tailBaseX + 16, by + bubH, tipX, tipY);
+      this.bubbleGfx.lineStyle(3, 0x111111, 1);
+      this.bubbleGfx.strokeTriangle(tailBaseX - 16, by + bubH, tailBaseX + 16, by + bubH, tipX, tipY);
+      // Cover the tail-base seam so border doesn't cut across
+      this.bubbleGfx.lineStyle(4, 0xffffff, 1);
+      this.bubbleGfx.lineBetween(tailBaseX - 18, by + bubH - 1, tailBaseX + 18, by + bubH - 1);
+
+      // Text — dark on white
+      this.dialogName.setStyle({ color: "#111111", fontStyle: "bold italic" });
+      this.dialogText.setStyle({ color: "#111111" });
+      this.dialogName.setPosition(bx + pad, by + pad - 2);
+      this.dialogText.setPosition(bx + pad, by + pad + 22);
+      this.dialogText.setWordWrapWidth(bubW - pad * 2);
+    }
+
+    _endCinematic() {
+      this.dialogActive = false;
+      this.cameras.main.fadeOut(700, 0, 0, 0);
+      this.cameras.main.once("camerafadeoutcomplete", () => this._skipToFlight());
+    }
+
+    _skipToFlight() {
+      this.scene.start("Flight");
+    }
+  }
+
+  // ============================================================
+  // FLIGHT SCENE — ride the creature, blast dark cloud enemies
+  // ============================================================
+  class FlightScene extends Phaser.Scene {
+    constructor() { super("Flight"); }
+
+    create() {
+      const W = this.scale.width, H = this.scale.height;
+      this.W = W; this.H = H;
+
+      // "Zoom out" effect achieved by drawing actors smaller, NOT setZoom
+      // (setZoom shrinks the entire frame including sky background, leaving black).
+      this.cameras.main.fadeIn(600, 0, 0, 0);
+
+      this._buildSky(W, H);
+
+      // ---- Creature: cross-fade interpolation between two stacked sprites
+      // Source images render at ~1500x800; small scale so swarm is visible.
+      const SRC_W = 1500, SRC_H = 800;
+      const creatureScale = Math.min((W * 0.10) / SRC_W, (H * 0.13) / SRC_H);
+      this.creatureScale = creatureScale;
+
+      this.creatureBack  = this.add.image(W * 0.30, H * 0.50, "pose_glide").setScale(creatureScale).setDepth(20);
+      this.creatureFront = this.add.image(W * 0.30, H * 0.50, "pose_glide").setScale(creatureScale).setDepth(21).setAlpha(0);
+      this.creatureBack.setOrigin(0.45, 0.55);
+      this.creatureFront.setOrigin(0.45, 0.55);
+
+      this.currentPose = "pose_glide";
+      this.basePose    = "pose_glide";
+
+      // Hit-aura graphics layer (lightning when struck)
+      this.auraGfx = this.add.graphics().setDepth(23);
+      this.auraT = 0; // active duration left
+
+      // Beam graphics
+      this.beamPhase = "idle";
+      this.beamPhaseEnd = 0;
+      this.beamCooldown = 0; // ms remaining before next shot allowed
+      this.beamGfx = this.add.graphics().setDepth(22);
+      this.beamGlow = this.add.graphics().setDepth(19);
+      this.beamCharge = 0; // 0..1 for build-up render
+
+      // Lightning bolt graphics (sky strikes)
+      this.boltGfx = this.add.graphics().setDepth(8);
+      this.activeBolts = []; // {polyline:[{x,y}], life, max, branches:[]}
+
+      // Enemy & projectile arrays
+      this.enemies = [];
+      this.divers  = []; // enemies currently in dive-strike attack
+      this.shockwaves = []; // strike VFX
+
+      // Wave manager — 10 waves total, sizes 4, 8, 12, ..., 40
+      // No enemies for first 4 seconds.
+      this.wave = 0;
+      this.maxWave = 10;
+      this.maxAlive = 12;
+      this.maxAliveCap = 42;
+      this.waveCooldown = 4000; // 4-second initial delay
+      this.waveFullySpawned = false;
+      this.allWavesDone = false;
+
+      // Lightning timer (random sky bolts) — also delayed
+      this.lightningCooldown = 4500 + Math.random() * 1500;
+
+      // Particle pool for beam (avoids per-frame add/destroy churn that froze the game)
+      this.beamParticlePool = [];
+      this.beamParticleActive = [];
+      for (let i = 0; i < 24; i++) {
+        const g = this.add.graphics().setDepth(22).setVisible(false);
+        this.beamParticlePool.push(g);
+      }
+      this._lastParticleTime = 0;
+
+      // ---- White-screen bombs ----
+      this.bombs = [];      // active bomb pickups
+      this.bombStock = 0;   // bombs in inventory
+      this.bombSpawnTimer = 8000 + Math.random() * 5000;
+      this.keyX = this.input.keyboard.addKey("X");
+
+      // ---- HUD (fixed to camera) ----
+      const ui = this.add.container(0, 0).setDepth(100).setScrollFactor(0);
+      this.uiRoot = ui;
+
+      this.hp = 5;
+      this.creatureHp = 8;
+      this.score = 0;
+      this.hudHp = this.add.text(20, 16, "♥ ".repeat(this.hp), {
+        fontFamily: "sans-serif", fontSize: "22px", color: "#ff6b8a",
+      });
+      this.hudCreatureHp = this.add.text(20, 44, "creature: " + this.creatureHp, {
+        fontFamily: "sans-serif", fontSize: "14px", color: "#ffd9ff",
+      });
+      this.hudScore = this.add.text(W - 20, 16, "score 0", {
+        fontFamily: "sans-serif", fontSize: "20px", color: "#ffffff",
+      }).setOrigin(1, 0);
+      this.hudWave = this.add.text(W - 20, 44, "wave 1", {
+        fontFamily: "sans-serif", fontSize: "14px", color: "#aab8ff",
+      }).setOrigin(1, 0);
+      this.hudBeam = this.add.text(20, 70, "Z BEAM READY", {
+        fontFamily: "sans-serif", fontSize: "14px", color: "#ffd9ff",
+      });
+      this.hudBomb = this.add.text(20, 92, "X BOMB · 0", {
+        fontFamily: "sans-serif", fontSize: "14px", color: "#ffffff",
+      });
+      this.tip = this.add.text(W / 2, H - 26, "Arrow keys to steer · Z heart beam · X white bomb (when held)", {
+        fontFamily: "sans-serif", fontSize: "14px", color: "#ffffff", backgroundColor: "#00000055",
+        padding: { x: 10, y: 4 },
+      }).setOrigin(0.5).setAlpha(0.85);
+      ui.add([this.hudHp, this.hudCreatureHp, this.hudScore, this.hudWave, this.hudBeam, this.hudBomb, this.tip]);
+
+      // Input
+      this.cursors = this.input.keyboard.createCursorKeys();
+      this.keyZ = this.input.keyboard.addKey("Z");
+
+      // Physics state — much more reactive
+      this.pitch = 0;     // -1 climb (up), +1 dive (down)
+      this.bank  = 0;     // -1 left, +1 right
+      this.vx    = 0;
+      this.vy    = 0;
+      // Wing-flap phase for cycling between up_stroke / glide / down_stroke
+      this.flapT = 0;
+    }
+
+    // ============================================================
+    // UPDATE
+    // ============================================================
+    update(time, dt) {
+      const dts = Math.min(0.05, dt / 1000);
+      const W = this.W, H = this.H;
+
+      // ---- Input -> targets ----
+      let pitchTarget = 0, bankTarget = 0;
+      if (this.cursors.up.isDown)    pitchTarget = -1;
+      if (this.cursors.down.isDown)  pitchTarget =  1;
+      if (this.cursors.left.isDown)  bankTarget = -1;
+      if (this.cursors.right.isDown) bankTarget =  1;
+
+      // VERY reactive lerp (high factor)
+      const lerp = (a, b, t) => a + (b - a) * Math.min(1, t);
+      this.pitch = lerp(this.pitch, pitchTarget, dts * 20);
+      this.bank  = lerp(this.bank,  bankTarget,  dts * 20);
+
+      // Velocity targets — punchier
+      const vyTarget = this.pitch * 700;
+      const vxTarget = this.bank  * 540;
+      this.vy = lerp(this.vy, vyTarget, dts * 13);
+      this.vx = lerp(this.vx, vxTarget, dts * 13);
+
+      // Move
+      let nx = this.creatureBack.x + this.vx * dts;
+      let ny = this.creatureBack.y + this.vy * dts;
+      // Clamp to a wider area (since cam is zoomed out)
+      nx = Phaser.Math.Clamp(nx, W * 0.20, W * 0.78);
+      ny = Phaser.Math.Clamp(ny, H * 0.18, H * 0.86);
+
+      // Subtle bob/sway — only when actively flying, nearly still at rest
+      const inputMag = Math.min(1, Math.abs(this.pitch) + Math.abs(this.bank));
+      const bob  = Math.sin(time * 0.0028) * (1 + inputMag * 3.5);
+      const sway = Math.sin(time * 0.0019) * (0.3 + inputMag * 1.2);
+      this.creatureBack.x  = nx + sway;
+      this.creatureBack.y  = ny + bob;
+      this.creatureFront.x = this.creatureBack.x;
+      this.creatureFront.y = this.creatureBack.y;
+
+      // Tilt rotation
+      const tilt = this.pitch * Phaser.Math.DegToRad(11) + this.bank * Phaser.Math.DegToRad(3);
+      this.creatureBack.rotation  = tilt;
+      this.creatureFront.rotation = tilt;
+
+      // ---- Pose selection ----
+      // While beam is active the beam state machine drives the pose.
+      if (this.beamPhase === "idle") {
+        this._updateLevelFlapPose(time, dts);
+      }
+
+      // ---- Beam ----
+      if (this.beamCooldown > 0) this.beamCooldown -= dt;
+      if (Phaser.Input.Keyboard.JustDown(this.keyZ) && this.beamPhase === "idle" && this.beamCooldown <= 0) {
+        this._beginBeam();
+      }
+      if (this.beamPhase !== "idle" && time >= this.beamPhaseEnd) {
+        this._advanceBeam(time);
+      }
+      this._renderBeam(time);
+
+      // ---- Lightning sky strikes ----
+      this.lightningCooldown -= dt;
+      if (this.lightningCooldown <= 0) {
+        this._spawnLightningBolt();
+        this.lightningCooldown = 1100 + Math.random() * 2400;
+      }
+      this._renderBolts(dt);
+
+      // ---- Hit aura ----
+      if (this.auraT > 0) {
+        this.auraT = Math.max(0, this.auraT - dt);
+        this._renderAura(time);
+      } else {
+        this.auraGfx.clear();
+      }
+
+      // ---- Wave manager ----
+      this.waveCooldown -= dt;
+      // If mid-wave and all enemies cleared, skip straight to next wave
+      if (this.wave > 0 && !this.allWavesDone && this.wave < this.maxWave
+          && this.enemies.length === 0 && this.waveFullySpawned) {
+        this.waveCooldown = 0;
+      }
+      if (!this.allWavesDone && this.waveCooldown <= 0 && this.wave < this.maxWave) {
+        this.startWave();
+      }
+      if (this.wave >= this.maxWave && this.enemies.length === 0 && !this.allWavesDone) {
+        this.allWavesDone = true;
+        this._victoryBanner();
+      }
+
+      // ---- White-screen bombs ----
+      this.bombSpawnTimer -= dt;
+      if (this.bombSpawnTimer <= 0 && this.bombs.length < 2 && this.wave > 0) {
+        this._spawnWhiteBomb();
+        this.bombSpawnTimer = 14000 + Math.random() * 8000;
+      }
+      for (let i = this.bombs.length - 1; i >= 0; i--) {
+        const b = this.bombs[i];
+        b.update(dts, this.creatureBack.x, this.creatureBack.y, time);
+        // Pickup test
+        const dx = b.x - this.creatureBack.x, dy = b.y - this.creatureBack.y;
+        if (Math.abs(dx) < 50 && Math.abs(dy) < 40) {
+          b.collect(this);
+          this.bombs.splice(i, 1);
+          this.bombStock += 1;
+          continue;
+        }
+        if (b.life <= 0 || b.x < -200 || b.x > this.W + 400) {
+          b.destroy(); this.bombs.splice(i, 1);
+        }
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.keyX) && this.bombStock > 0) {
+        this.bombStock -= 1;
+        this._detonateWhiteBomb();
+      }
+
+      // ---- Update enemies ----
+      const playerCx = this.creatureBack.x + 80 * this.creatureScale;
+      const playerCy = this.creatureBack.y + 30 * this.creatureScale;
+      const beamY = this.creatureBack.y + 10 * this.creatureScale;
+      const beamActive = this.beamPhase === "firing";
+      const beamX0 = this.creatureBack.x + 280 * this.creatureScale;
+
+      for (let i = this.enemies.length - 1; i >= 0; i--) {
+        const e = this.enemies[i];
+        e.update(dts, playerCx, playerCy, time);
+
+        // Beam destroys enemies — narrow hit band, must aim
+        if (beamActive && e.x > beamX0 - 30 && Math.abs(e.y - beamY) < this.H * 0.07) {
+          e.kill(this);
+          this.enemies.splice(i, 1);
+          this.score += 10;
+          continue;
+        }
+        // Off-screen far → cull
+        if (e.x < -200 || e.x > W + 400 || e.y < -300 || e.y > H + 300) {
+          e.destroy();
+          this.enemies.splice(i, 1);
+          continue;
+        }
+        // Strike collision
+        if (e.striking) {
+          const dx = e.x - playerCx, dy = e.y - playerCy;
+          if (Math.abs(dx) < 90 && Math.abs(dy) < 80 && !e.dead) {
+            this._takeHit(false);
+            e.kill(this);
+            this.enemies.splice(i, 1);
+          }
+        } else {
+          // Body collision
+          const dx = e.x - playerCx, dy = e.y - playerCy;
+          if (Math.abs(dx) < 70 && Math.abs(dy) < 60 && !e.dead) {
+            this._takeHit(true);
+            e.kill(this);
+            this.enemies.splice(i, 1);
+          }
+        }
+      }
+
+      // Parallax cloud drift (cloud speed responds to player horizontal vel)
+      const drift = 1 + Math.abs(this.vx) * 0.003;
+      if (this.cloudFar)  this.cloudFar.tilePositionX  += 18 * dts * drift;
+      if (this.cloudMid)  this.cloudMid.tilePositionX  += 50 * dts * drift;
+      if (this.cloudNear) this.cloudNear.tilePositionX += 110 * dts * drift;
+
+      // HUD
+      this.hudHp.setText("♥ ".repeat(Math.max(0, this.hp)).trim() || "—");
+      this.hudCreatureHp.setText("creature: " + this.creatureHp);
+      this.hudScore.setText("score " + this.score);
+      const waveLabel = this.wave === 0
+        ? `wave 0 / ${this.maxWave}  ·  preparing…`
+        : `wave ${this.wave} / ${this.maxWave}  ·  ${this.enemies.length} in air`;
+      this.hudWave.setText(waveLabel);
+      const beamLabel = this.beamCooldown > 0 ? `Z  RELOAD  ${(this.beamCooldown/1000).toFixed(1)}s` : (this.beamPhase === "idle" ? "Z  BEAM READY" : "Z  BEAM " + this.beamPhase.toUpperCase());
+      this.hudBeam.setText(beamLabel);
+      this.hudBomb.setText("X  BOMB · " + this.bombStock + (this.bombStock ? "  (ready!)" : ""));
+    }
+
+    // ============================================================
+    // POSE: continuous wing-flap interpolation
+    // ============================================================
+    _updateLevelFlapPose(time, dts) {
+      // Held poses for sustained pitch input.
+      let desired;
+      if (this.pitch > 0.55)       desired = "pose_dive";
+      else if (this.pitch > 0.25)  desired = "pose_down_stroke";
+      else if (this.pitch < -0.25) desired = "pose_up_stroke";
+      else {
+        // Slower 4-frame wing-flap cycle (1.8s) for smoother reads.
+        this.flapT += dts;
+        const cyc = (this.flapT % 1.8) / 1.8;
+        if (cyc < 0.25)      desired = "pose_up_stroke";
+        else if (cyc < 0.5)  desired = "pose_glide";
+        else if (cyc < 0.75) desired = "pose_down_stroke";
+        else                  desired = "pose_glide";
+      }
+      if (desired !== this.basePose) {
+        // Longer cross-fade for buttery interpolation between frames.
+        this._setPose(desired, 280);
+        this.basePose = desired;
+      }
+    }
+
+    _setPose(textureKey, duration = 260) {
+      if (this.currentPose === textureKey) return;
+      // Move CURRENT pose to back layer (fully opaque), new pose fades in on front.
+      this.creatureBack.setTexture(this.currentPose).setAlpha(1);
+      this.creatureFront.setTexture(textureKey).setAlpha(0);
+      this.tweens.killTweensOf(this.creatureFront);
+      this.tweens.add({
+        targets: this.creatureFront, alpha: 1, duration, ease: "Cubic.inOut",
+        onComplete: () => {
+          this.creatureBack.setTexture(textureKey).setAlpha(1);
+          this.creatureFront.setAlpha(0);
+        },
+      });
+      this.currentPose = textureKey;
+    }
+
+    // ============================================================
+    // BEAM — much cooler, cosmic-energy heart beam
+    // ============================================================
+    _beginBeam() {
+      this.beamPhase = "charging";
+      this.beamPhaseEnd = this.time.now + 360;
+      this._setPose("pose_charging", 90);
+    }
+    _advanceBeam(time) {
+      if (this.beamPhase === "charging") {
+        this.beamPhase = "firing";
+        this.beamPhaseEnd = time + 480;
+        this._setPose("pose_firing", 60);
+        this.cameras.main.shake(140, 0.005);
+      } else if (this.beamPhase === "firing") {
+        this.beamPhase = "fading";
+        this.beamPhaseEnd = time + 320;
+        this._setPose("pose_recoil", 110);
+      } else if (this.beamPhase === "fading") {
+        this.beamPhase = "idle";
+        this.beamCooldown = 900; // must wait before firing again
+        this.beamGfx.clear(); this.beamGlow.clear();
+        this._setPose("pose_glide", 220);
+        this.basePose = "pose_glide";
+      }
+    }
+    _renderBeam(time) {
+      this.beamGfx.clear();
+      this.beamGlow.clear();
+      // Tick particles regardless of phase so they finish their fade-out
+      this._tickBeamParticles(time);
+      if (this.beamPhase === "idle") return;
+
+      // Mouth origin: source-image offset to creature mouth.
+      // Creature face/mouth is far right of head; beam should emerge from beak.
+      const cx = this.creatureBack.x + 590 * this.creatureScale;
+      const cy = this.creatureBack.y + 30 * this.creatureScale;
+
+      if (this.beamPhase === "charging") {
+        const t = 1 - (this.beamPhaseEnd - time) / 360;
+        const baseR = 50;
+        for (let k = 0; k < 3; k++) {
+          const tt = (t + k * 0.33) % 1;
+          const r = baseR * (1.6 - tt);
+          const a = (1 - tt) * 0.55;
+          this.beamGlow.lineStyle(3, 0xff5d8c, a);
+          this.beamGlow.strokeCircle(cx, cy, r);
+        }
+        const pulse = 12 + t * 18;
+        this.beamGlow.fillStyle(0xff80b3, 0.45);
+        this.beamGlow.fillCircle(cx, cy, pulse * 1.8);
+        this.beamGfx.fillStyle(0xfff0f6, 0.95);
+        this._heart(this.beamGfx, cx, cy, pulse);
+        // Pooled spark — only every ~80ms
+        if (time - this._lastParticleTime > 80) {
+          this._lastParticleTime = time;
+          const ang = Math.random() * Math.PI * 2;
+          const r0 = 80 + Math.random() * 60;
+          this._spawnBeamParticle(
+            cx + Math.cos(ang) * r0, cy + Math.sin(ang) * r0,
+            cx, cy, 280, "spark"
+          );
+        }
+      } else if (this.beamPhase === "firing") {
+        const remain = (this.beamPhaseEnd - time) / 1300;
+        const intensity = remain > 0.85 ? (1 - (remain - 0.85) / 0.15) : (remain < 0.15 ? remain / 0.15 : 1);
+        const len = (this.W - cx + 200) * intensity;
+        // Narrower beam (was H*0.18, now H*0.085)
+        const baseH = (this.H * 0.085) * intensity;
+        const halfH = baseH + Math.sin(time * 0.04) * 4;
+
+        // 1) Outer fuchsia glow halo
+        this.beamGlow.fillStyle(0xff3a78, 0.18);
+        this.beamGlow.fillEllipse(cx + len * 0.5, cy, len * 1.02, halfH * 2.4);
+        // 2) Mid pink wash
+        this.beamGlow.fillStyle(0xff5d8c, 0.40);
+        this.beamGlow.fillEllipse(cx + len * 0.45, cy, len * 0.92, halfH * 1.6);
+        // 3) Inner bright core (ribbon)
+        const segs = 18;
+        const wave = (i) => Math.sin(time * 0.012 + i * 0.45) * halfH * 0.18;
+        this.beamGfx.fillStyle(0xfff0f6, 0.95);
+        this.beamGfx.beginPath();
+        for (let i = 0; i <= segs; i++) {
+          const fx = cx + (i / segs) * len;
+          const fy = cy - halfH * 0.42 + wave(i);
+          if (i === 0) this.beamGfx.moveTo(fx, fy);
+          else this.beamGfx.lineTo(fx, fy);
+        }
+        for (let i = segs; i >= 0; i--) {
+          const fx = cx + (i / segs) * len;
+          const fy = cy + halfH * 0.42 + wave(i + 7);
+          this.beamGfx.lineTo(fx, fy);
+        }
+        this.beamGfx.closePath();
+        this.beamGfx.fillPath();
+
+        // 4) Crackling tendrils — fewer iterations for perf
+        for (const edge of [-1, 1]) {
+          this.beamGfx.lineStyle(2, 0xffffff, 0.85);
+          this.beamGfx.beginPath();
+          let lx = cx, ly = cy + edge * halfH * 0.65;
+          this.beamGfx.moveTo(lx, ly);
+          const segLen = 60;
+          while (lx < cx + len) {
+            lx += segLen + Math.random() * 18;
+            ly = cy + edge * (halfH * 0.55 + (Math.random() - 0.5) * halfH * 0.4);
+            this.beamGfx.lineTo(lx, ly);
+          }
+          this.beamGfx.strokePath();
+        }
+
+        // 5) Heart at mouth origin
+        const r = 30 + Math.sin(time * 0.022) * 4;
+        this.beamGlow.fillStyle(0xff80b3, 0.55);
+        this.beamGlow.fillCircle(cx, cy, r * 1.7);
+        this.beamGfx.fillStyle(0xff8fb3, 1);
+        this._heart(this.beamGfx, cx + 4, cy, r);
+
+        // 6) Pooled heart particles riding beam — throttled to ~every 100ms
+        if (time - this._lastParticleTime > 100) {
+          this._lastParticleTime = time;
+          const hx = cx + Math.random() * len;
+          const hy = cy + (Math.random() - 0.5) * halfH * 1.4;
+          this._spawnBeamParticle(hx, hy, hx + 60, hy - 60, 700, "heart");
+        }
+      } else if (this.beamPhase === "fading") {
+        const t = (this.beamPhaseEnd - time) / 320;
+        const r = 18 + (1 - t) * 28;
+        this.beamGlow.fillStyle(0xff80b3, t * 0.5);
+        this.beamGlow.fillCircle(cx, cy, r * 1.5);
+        this.beamGfx.fillStyle(0xff90b8, t);
+        this._heart(this.beamGfx, cx, cy, r);
+      }
+    }
+
+    // Pooled particles — pulled from beamParticlePool, returned on expiry.
+    _spawnBeamParticle(x, y, tx, ty, durationMs, kind) {
+      const g = this.beamParticlePool.pop();
+      if (!g) return; // pool exhausted — silent drop, prevents freeze
+      g.clear();
+      g.setVisible(true).setAlpha(1);
+      g.x = x; g.y = y;
+      if (kind === "spark") {
+        g.fillStyle(0xff90b8, 1);
+        g.fillCircle(0, 0, 3 + Math.random() * 2);
+      } else {
+        const r = 6 + Math.random() * 6;
+        g.fillStyle(0xff90b8, 0.9);
+        g.fillCircle(-r * 0.45, -r * 0.15, r * 0.55);
+        g.fillCircle( r * 0.45, -r * 0.15, r * 0.55);
+        g.beginPath();
+        g.moveTo(-r * 0.95, 0); g.lineTo(r * 0.95, 0); g.lineTo(0, r * 1.05);
+        g.closePath(); g.fillPath();
+      }
+      const startT = this.time.now;
+      this.beamParticleActive.push({ g, x0: x, y0: y, x1: tx, y1: ty, startT, dur: durationMs });
+    }
+
+    _tickBeamParticles(time) {
+      for (let i = this.beamParticleActive.length - 1; i >= 0; i--) {
+        const p = this.beamParticleActive[i];
+        const t = (time - p.startT) / p.dur;
+        if (t >= 1) {
+          p.g.setVisible(false);
+          this.beamParticlePool.push(p.g);
+          this.beamParticleActive.splice(i, 1);
+          continue;
+        }
+        p.g.x = p.x0 + (p.x1 - p.x0) * t;
+        p.g.y = p.y0 + (p.y1 - p.y0) * t;
+        p.g.setAlpha(1 - t);
+      }
+    }
+
+    _heart(gfx, x, y, r) {
+      gfx.fillCircle(x - r * 0.45, y - r * 0.15, r * 0.55);
+      gfx.fillCircle(x + r * 0.45, y - r * 0.15, r * 0.55);
+      gfx.beginPath();
+      gfx.moveTo(x - r * 0.95, y);
+      gfx.lineTo(x + r * 0.95, y);
+      gfx.lineTo(x, y + r * 1.05);
+      gfx.closePath();
+      gfx.fillPath();
+    }
+
+    // ============================================================
+    // WAVE SYSTEM
+    // ============================================================
+    startWave() {
+      this.wave += 1;
+      this.waveFullySpawned = false;
+      // 10 waves: 4, 8, 12, 16, 20, 24, 28, 32, 36, 40
+      const size = Math.min(40, 4 * this.wave);
+      this.maxAlive = Math.min(this.maxAliveCap, size + 4);
+      // Stagger spawns over ~3s so the wave feels like it's "stepping in"
+      const stagger = Math.max(80, 2400 / size);
+      for (let i = 0; i < size; i++) {
+        this.time.delayedCall(i * stagger + Math.random() * 160, () => this._spawnEnemy());
+      }
+      // Mark fully spawned after last enemy is queued
+      this.time.delayedCall(size * stagger + 400, () => { this.waveFullySpawned = true; });
+      // Fallback cooldown (in case enemies linger long)
+      this.waveCooldown = 6500 + size * 120;
+      this._waveBanner(this.wave, size);
+    }
+
+    _waveBanner(n, size) {
+      const t = this.add.text(this.W / 2, this.H * 0.20, `WAVE ${n}  ·  ${size} INCOMING`, {
+        fontFamily: "serif", fontSize: "44px", fontStyle: "italic",
+        color: "#fff099", stroke: "#000000", strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(95).setAlpha(0).setScrollFactor(0);
+      this.tweens.add({
+        targets: t, alpha: 1, duration: 350, yoyo: true, hold: 800,
+        onComplete: () => t.destroy(),
+      });
+    }
+
+    _victoryBanner() {
+      const t = this.add.text(this.W / 2, this.H / 2, "the dark wing breaks", {
+        fontFamily: "serif", fontStyle: "italic", fontSize: "44px", color: "#fff099",
+        stroke: "#000000", strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(120).setScrollFactor(0).setAlpha(0);
+      this.tweens.add({ targets: t, alpha: 1, duration: 800, ease: "Sine.inOut" });
+    }
+
+    _spawnEnemy() {
+      // All clouds emerge from the right
+      const x = this.W + Phaser.Math.Between(40, 280);
+      const y = Phaser.Math.Between(this.H * 0.08, this.H * 0.88);
+      const mode = "drift";
+      const e = new DarkCloudEnemy(this, x, y, mode);
+      this.enemies.push(e);
+    }
+
+    // ============================================================
+    // LIGHTNING (sky strikes — random damage hazard)
+    // ============================================================
+    _spawnLightningBolt() {
+      // Origin in the upper cloud band, falling near random x.
+      const ox = Phaser.Math.Between(this.W * 0.10, this.W * 0.95);
+      const oy = this.H * 0.05;
+      const ty = this.H + 60;
+      // Build jagged polyline from (ox,oy) to (ox+jitter, ty)
+      const segs = 14;
+      const pts = [];
+      let cx = ox, cy = oy;
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const targetX = ox + (Math.random() - 0.5) * 60;
+        cx = Phaser.Math.Linear(ox, ox + (Math.random() - 0.5) * 80, t) + (Math.random() - 0.5) * 30;
+        cy = Phaser.Math.Linear(oy, ty, t);
+        pts.push({ x: cx, y: cy });
+      }
+      // Maybe a branch
+      const branches = [];
+      if (Math.random() < 0.55) {
+        const startIdx = Math.floor(segs * 0.4 + Math.random() * segs * 0.4);
+        const sp = pts[startIdx];
+        const bp = [{ x: sp.x, y: sp.y }];
+        let bx = sp.x, by = sp.y;
+        const dir = Math.random() < 0.5 ? -1 : 1;
+        for (let i = 0; i < 6; i++) {
+          bx += dir * (10 + Math.random() * 18);
+          by += 18 + Math.random() * 14;
+          bp.push({ x: bx, y: by });
+        }
+        branches.push(bp);
+      }
+      const bolt = { polyline: pts, branches, life: 240, max: 240, x: ox };
+      this.activeBolts.push(bolt);
+      // Camera flash
+      this.cameras.main.flash(120, 240, 240, 255, false);
+
+      // Damage if creature is near the strike line
+      const px = this.creatureBack.x;
+      const py = this.creatureBack.y;
+      // Find closest distance from (px,py) to polyline
+      let minD = Infinity;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const d = ptSegDist(px, py, a.x, a.y, b.x, b.y);
+        if (d < minD) minD = d;
+      }
+      // Lightning is purely visual — no damage to player
+      void minD;
+    }
+
+    _renderBolts(dt) {
+      this.boltGfx.clear();
+      for (let i = this.activeBolts.length - 1; i >= 0; i--) {
+        const b = this.activeBolts[i];
+        b.life -= dt;
+        if (b.life <= 0) { this.activeBolts.splice(i, 1); continue; }
+        const a = Math.max(0, b.life / b.max);
+        // Outer glow
+        this.boltGfx.lineStyle(10, 0xc8d8ff, a * 0.35);
+        this._drawPolyline(this.boltGfx, b.polyline);
+        for (const br of b.branches) this._drawPolyline(this.boltGfx, br);
+        // Mid
+        this.boltGfx.lineStyle(5, 0xe8eeff, a * 0.6);
+        this._drawPolyline(this.boltGfx, b.polyline);
+        for (const br of b.branches) this._drawPolyline(this.boltGfx, br);
+        // Bright core
+        this.boltGfx.lineStyle(2, 0xffffff, a);
+        this._drawPolyline(this.boltGfx, b.polyline);
+        for (const br of b.branches) this._drawPolyline(this.boltGfx, br);
+      }
+    }
+    _drawPolyline(gfx, pts) {
+      if (pts.length < 2) return;
+      gfx.beginPath();
+      gfx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) gfx.lineTo(pts[i].x, pts[i].y);
+      gfx.strokePath();
+    }
+
+    // ============================================================
+    // HIT AURA — lightning crackle around player when struck
+    // ============================================================
+    _renderAura(time) {
+      this.auraGfx.clear();
+      const cx = this.creatureBack.x + 30 * this.creatureScale;
+      const cy = this.creatureBack.y;
+      const t = this.auraT / 600;
+      const r = 110 + Math.sin(time * 0.04) * 10;
+      // Halo
+      this.auraGfx.fillStyle(0x88c8ff, 0.18 * t);
+      this.auraGfx.fillCircle(cx, cy, r * 1.2);
+      this.auraGfx.fillStyle(0xc8e8ff, 0.35 * t);
+      this.auraGfx.fillCircle(cx, cy, r * 0.55);
+      // Crackling lightning arcs around the body
+      const arcs = 6;
+      for (let i = 0; i < arcs; i++) {
+        const a0 = (i / arcs) * Math.PI * 2 + time * 0.005;
+        const a1 = a0 + Math.PI / arcs;
+        const x0 = cx + Math.cos(a0) * r;
+        const y0 = cy + Math.sin(a0) * r;
+        const x1 = cx + Math.cos(a1) * r;
+        const y1 = cy + Math.sin(a1) * r;
+        this.auraGfx.lineStyle(3, 0xddeeff, 0.85 * t);
+        const segs = 5;
+        this.auraGfx.beginPath();
+        this.auraGfx.moveTo(x0, y0);
+        for (let s = 1; s <= segs; s++) {
+          const tt = s / segs;
+          const mx = Phaser.Math.Linear(x0, x1, tt) + (Math.random() - 0.5) * 14;
+          const my = Phaser.Math.Linear(y0, y1, tt) + (Math.random() - 0.5) * 14;
+          this.auraGfx.lineTo(mx, my);
+        }
+        this.auraGfx.strokePath();
+      }
+    }
+
+    // ============================================================
+    // HIT HANDLING
+    // ============================================================
+    _takeHit(playerOnly, isLightning = false) {
+      // Player & creature both lose a bit
+      this.hp -= 1;
+      if (!playerOnly) this.creatureHp = Math.max(0, this.creatureHp - 1);
+      this.cameras.main.shake(180, 0.014);
+      this.cameras.main.flash(140, isLightning ? 220 : 255, 80, 80);
+      this.auraT = 600; // engage aura
+      if (this.hp <= 0 || this.creatureHp <= 0) {
+        this.cameras.main.shake(300, 0.022);
+        this.add.text(this.W / 2, this.H / 2, "the storm took us…", {
+          fontFamily: "serif", fontStyle: "italic", fontSize: "44px", color: "#ffd1d1",
+        }).setOrigin(0.5).setDepth(120).setScrollFactor(0);
+        // Auto-respawn from wave 1 after a short pause
+        this.time.delayedCall(2200, () => this.scene.restart());
+      }
+    }
+
+    // ============================================================
+    // SKY BACKGROUND
+    // ============================================================
+    _buildSky(W, H) {
+      // Stormy gradient — dark stormhead clouds at top, moody mid, golden bottom horizon
+      const g = this.add.graphics().setDepth(0);
+      const top = Phaser.Display.Color.HexStringToColor("#22243a");
+      const mid = Phaser.Display.Color.HexStringToColor("#5b4d8a");
+      const bot = Phaser.Display.Color.HexStringToColor("#cf9468");
+      const bands = 60;
+      for (let i = 0; i < bands; i++) {
+        const t = i / bands;
+        let c;
+        if (t < 0.5) c = Phaser.Display.Color.Interpolate.ColorWithColor(top, mid, 1, t * 2);
+        else c = Phaser.Display.Color.Interpolate.ColorWithColor(mid, bot, 1, (t - 0.5) * 2);
+        const col = Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+        g.fillStyle(col, 1);
+        g.fillRect(0, (i / bands) * H, W, H / bands + 1);
+      }
+      // Dark stormcloud band at top (very wide & tall)
+      this._makeCloudTexture("stormTop", 0.55, 0x1c1c2e);
+      this.stormBand = this.add.tileSprite(W / 2, H * 0.10, W * 1.2, 240, "stormTop").setDepth(2);
+
+      this._makeCloudTexture("cloudFar",  0.20, 0xddd8ee);
+      this._makeCloudTexture("cloudMid",  0.32, 0xeae5fa);
+      this._makeCloudTexture("cloudNear", 0.55, 0xffffff);
+
+      this.cloudFar  = this.add.tileSprite(W / 2, H * 0.42, W * 1.2, 220, "cloudFar").setDepth(3);
+      this.cloudMid  = this.add.tileSprite(W / 2, H * 0.62, W * 1.2, 280, "cloudMid").setDepth(4);
+      this.cloudNear = this.add.tileSprite(W / 2, H * 0.92, W * 1.2, 360, "cloudNear").setDepth(5);
+    }
+    _makeCloudTexture(key, alpha, color) {
+      if (this.textures.exists(key)) return;
+      const w = 1024, h = 280;
+      const gfx = this.make.graphics({ x: 0, y: 0, add: false });
+      for (let i = 0; i < 24; i++) {
+        const cx = Math.random() * w;
+        const cy = Math.random() * h;
+        const r = 60 + Math.random() * 110;
+        gfx.fillStyle(color, alpha + Math.random() * 0.18);
+        gfx.fillCircle(cx, cy, r);
+      }
+      gfx.generateTexture(key, w, h);
+      gfx.destroy();
+    }
+
+    // ============================================================
+    // WHITE-SCREEN BOMB
+    // ============================================================
+    _spawnWhiteBomb() {
+      // Enter from a random edge
+      const fromLeft = Math.random() < 0.5;
+      const x = fromLeft ? -40 : this.W + 40;
+      const y = Phaser.Math.Between(this.H * 0.20, this.H * 0.80);
+      const b = new WhiteBomb(this, x, y);
+      // Drop a hint banner
+      const hint = this.add.text(this.W / 2, this.H * 0.30, "✦ WHITE BOMB SIGHTED — catch it! ✦", {
+        fontFamily: "sans-serif", fontSize: "20px", color: "#ffffff",
+        stroke: "#000", strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(95).setScrollFactor(0).setAlpha(0);
+      this.tweens.add({
+        targets: hint, alpha: 1, duration: 300, yoyo: true, hold: 1100,
+        onComplete: () => hint.destroy(),
+      });
+      this.bombs.push(b);
+    }
+
+    _detonateWhiteBomb() {
+      // Big white flash
+      const flash = this.add.rectangle(this.W / 2, this.H / 2, this.W * 1.2, this.H * 1.2, 0xffffff, 1)
+        .setDepth(150).setScrollFactor(0).setAlpha(0);
+      this.tweens.add({
+        targets: flash, alpha: 1, duration: 90, ease: "Sine.in",
+        onComplete: () => {
+          this.tweens.add({
+            targets: flash, alpha: 0, duration: 700, ease: "Sine.out",
+            onComplete: () => flash.destroy(),
+          });
+        },
+      });
+      this.cameras.main.shake(220, 0.014);
+
+      // Concentric expanding ring
+      const ring = this.add.graphics().setDepth(149);
+      const cx = this.creatureBack.x + 30 * this.creatureScale;
+      const cy = this.creatureBack.y;
+      this.tweens.addCounter({
+        from: 0, to: 1, duration: 600, ease: "Sine.out",
+        onUpdate: (tw) => {
+          ring.clear();
+          const t = tw.getValue();
+          const r = 40 + t * Math.max(this.W, this.H) * 1.2;
+          ring.lineStyle(8 * (1 - t * 0.6), 0xffffff, 1 - t);
+          ring.strokeCircle(cx, cy, r);
+        },
+        onComplete: () => ring.destroy(),
+      });
+
+      // Kill all enemies
+      const killCount = this.enemies.length;
+      for (const e of this.enemies) e.kill(this);
+      this.enemies.length = 0;
+      this.score += killCount * 10;
+    }
+  }
+
+  // ============================================================
+  // DARK CLOUD ENEMY — dark recolor of the level-1 cloud enemies
+  // Drift toward player; if above, dive-strike with lightning trail.
+  // ============================================================
+  class DarkCloudEnemy {
+    constructor(scene, x, y, mode) {
+      this.scene = scene;
+      this.x = x; this.y = y;
+      this.mode = mode; // "drift" or "drop"
+      this.dead = false;
+      this.striking = false;
+      this.strikeArmTimer = 400 + Math.random() * 600;
+      this.flashT = 0;
+
+      const c = scene.add.container(x, y).setDepth(15);
+      this.container = c;
+
+      // Main dark cloud blob (3 stacked dark ellipses)
+      const blob1 = scene.add.ellipse(0, 0, 84, 50, 0x1a1a2c).setStrokeStyle(2, 0x0c0c18);
+      const blob2 = scene.add.ellipse(-18, -14, 50, 36, 0x222238).setStrokeStyle(2, 0x0c0c18);
+      const blob3 = scene.add.ellipse(20, -12, 56, 40, 0x202036).setStrokeStyle(2, 0x0c0c18);
+      const tail  = scene.add.ellipse(-30, 8, 36, 22, 0x14141e);
+      // Glowing red eyes
+      const eye1 = scene.add.circle(-6, -4, 4, 0xff3a6b);
+      const eye2 = scene.add.circle( 12, -2, 4, 0xff3a6b);
+      // Maw
+      const maw = scene.add.ellipse(6, 8, 22, 10, 0x070710);
+      // Lightning crackle along underside (rendered as simple zigzag triangles)
+      this.crackleLayer = scene.add.graphics();
+      c.add([tail, blob1, blob2, blob3, this.crackleLayer, maw, eye1, eye2]);
+
+      this.eye1 = eye1; this.eye2 = eye2;
+
+      // Drift params
+      this.t = Math.random() * Math.PI * 2;
+      this.speed = 160 + Math.random() * 80 + scene.wave * 10;
+
+      // For drop mode, fall in from above first.
+      if (mode === "drop") {
+        this.fallVy = 220 + Math.random() * 80;
+      }
+
+      // Strike trail graphics
+      this.trailGfx = scene.add.graphics().setDepth(14);
+      this.trailPts = [];
+    }
+
+    update(dt, px, py, time) {
+      if (this.dead) return;
+      this.t += dt * 3;
+      this.flashT += dt;
+
+      if (this.mode === "drop") {
+        // Falling in from above to a stable y near py - 120 (above player)
+        const targetY = Math.min(py - 90, this.scene.H * 0.32);
+        if (this.y < targetY) {
+          this.y += this.fallVy * dt;
+        } else {
+          this.mode = "drift";
+        }
+        // Slight horizontal drift toward player while dropping
+        this.x += (px - this.x) * 0.4 * dt;
+      } else if (this.striking) {
+        // Plummet toward player position
+        const dx = this.targetX - this.x;
+        const dy = this.targetY - this.y;
+        const d = Math.hypot(dx, dy);
+        const sp = 1100 * dt;
+        if (d < sp) {
+          // Reached target — but the collision check in scene also kills the strike on hit
+          this.x = this.targetX;
+          this.y = this.targetY;
+          // After overshoot, mark dead (it dissipates)
+          this.kill(this.scene);
+          return;
+        }
+        this.x += (dx / d) * sp;
+        this.y += (dy / d) * sp;
+        // Add trail point
+        this.trailPts.push({ x: this.x, y: this.y, age: 0 });
+      } else {
+        // Drift: float, gentle vertical sin, drift left
+        this.y += Math.sin(this.t) * 18 * dt;
+        this.x -= this.speed * dt;
+        // If we end up ABOVE the player and within strike range, arm the dive
+        const above = (this.y < py - 60);
+        const inRangeX = Math.abs(this.x - px) < this.scene.W * 0.30;
+        if (above && inRangeX) {
+          this.strikeArmTimer -= dt * 1000;
+          if (this.strikeArmTimer <= 0) {
+            this._beginStrike(px, py);
+          }
+        }
+      }
+
+      this.container.x = this.x;
+      this.container.y = this.y;
+
+      // Eye pulse
+      const pulse = 0.7 + 0.3 * Math.sin(time * 0.006);
+      this.eye1.fillAlpha = pulse;
+      this.eye2.fillAlpha = pulse;
+
+      // Crackle on bottom (every ~80ms when armed)
+      if (this.strikeArmTimer < 800 && !this.striking) {
+        if (Math.random() < 0.22) {
+          this.crackleLayer.clear();
+          this.crackleLayer.lineStyle(2, 0xb0c4ff, 0.85);
+          this.crackleLayer.beginPath();
+          this.crackleLayer.moveTo(-30, 12);
+          for (let i = 0; i < 6; i++) {
+            this.crackleLayer.lineTo(-30 + i * 12 + Math.random() * 6,
+                                     12 + (Math.random() - 0.5) * 8);
+          }
+          this.crackleLayer.strokePath();
+        } else if (Math.random() < 0.1) {
+          this.crackleLayer.clear();
+        }
+      }
+
+      // Render trail (when striking) — fade older points
+      if (this.trailPts.length) {
+        this.trailGfx.clear();
+        for (let i = 0; i < this.trailPts.length; i++) {
+          const p = this.trailPts[i];
+          p.age += dt;
+        }
+        // Cull
+        this.trailPts = this.trailPts.filter(p => p.age < 0.40);
+        // Outer glow
+        this.trailGfx.lineStyle(7, 0x88a8ff, 0.35);
+        if (this.trailPts.length > 1) {
+          this.trailGfx.beginPath();
+          this.trailGfx.moveTo(this.trailPts[0].x, this.trailPts[0].y);
+          for (let i = 1; i < this.trailPts.length; i++) {
+            this.trailGfx.lineTo(this.trailPts[i].x, this.trailPts[i].y);
+          }
+          this.trailGfx.strokePath();
+        }
+        // Bright core
+        this.trailGfx.lineStyle(2, 0xffffff, 0.9);
+        if (this.trailPts.length > 1) {
+          this.trailGfx.beginPath();
+          this.trailGfx.moveTo(this.trailPts[0].x, this.trailPts[0].y);
+          for (let i = 1; i < this.trailPts.length; i++) {
+            this.trailGfx.lineTo(this.trailPts[i].x, this.trailPts[i].y);
+          }
+          this.trailGfx.strokePath();
+        }
+      }
+    }
+
+    _beginStrike(px, py) {
+      this.striking = true;
+      this.targetX = px;
+      this.targetY = py;
+      // Flash red briefly to telegraph
+      this.scene.tweens.add({
+        targets: [this.eye1, this.eye2],
+        radius: 7, duration: 120, yoyo: true,
+      });
+    }
+
+    kill(scene) {
+      if (this.dead) return;
+      this.dead = true;
+      // Burst: dark puffs + pink hearts (creature's love overcoming)
+      for (let i = 0; i < 5; i++) {
+        const puff = scene.add.circle(this.x, this.y, 8 + Math.random() * 6, 0x222230, 0.7).setDepth(16);
+        scene.tweens.add({
+          targets: puff,
+          x: this.x + (Math.random() - 0.5) * 100,
+          y: this.y + (Math.random() - 0.5) * 80,
+          alpha: 0, scale: 2.4,
+          duration: 520, ease: "Sine.out",
+          onComplete: () => puff.destroy(),
+        });
+      }
+      for (let i = 0; i < 5; i++) {
+        const h = scene.add.graphics().setDepth(16);
+        h.fillStyle(0xff8fb3, 1);
+        const r = 6 + Math.random() * 4;
+        h.fillCircle(-r * 0.45, -r * 0.15, r * 0.55);
+        h.fillCircle( r * 0.45, -r * 0.15, r * 0.55);
+        h.beginPath();
+        h.moveTo(-r * 0.9, 0); h.lineTo(r * 0.9, 0); h.lineTo(0, r * 1.0);
+        h.closePath(); h.fillPath();
+        h.x = this.x; h.y = this.y;
+        scene.tweens.add({
+          targets: h,
+          x: this.x + (Math.random() - 0.5) * 110,
+          y: this.y - 50 - Math.random() * 40,
+          alpha: 0,
+          duration: 600 + Math.random() * 200,
+          onComplete: () => h.destroy(),
+        });
+      }
+      this.container.destroy();
+      if (this.trailGfx) this.trailGfx.destroy();
+    }
+    destroy() {
+      if (!this.dead) {
+        this.container.destroy();
+        if (this.trailGfx) this.trailGfx.destroy();
+      }
+      this.dead = true;
+    }
+  }
+
+  // ============================================================
+  // WHITE-SCREEN BOMB PICKUP
+  // Floats erratically at high speed — tricky to grab.
+  // On collect, adds 1 to bombStock. On detonate (X) clears all enemies + flash.
+  // ============================================================
+  class WhiteBomb {
+    constructor(scene, x, y) {
+      this.scene = scene;
+      this.x = x; this.y = y;
+      this.life = 8500; // ms before it self-dispels
+      this.t0 = scene.time.now;
+      this.t = Math.random() * Math.PI * 2;
+
+      const c = scene.add.container(x, y).setDepth(18);
+      this.container = c;
+      // Outer glow
+      this.outer = scene.add.circle(0, 0, 30, 0xffffff, 0.40);
+      // Mid corona
+      this.mid = scene.add.circle(0, 0, 22, 0xffffff, 0.85);
+      // Bright core
+      this.core = scene.add.circle(0, 0, 11, 0xffffff, 1.0);
+      // Spike rays
+      this.rays = scene.add.graphics();
+      this._drawRays(0);
+      c.add([this.outer, this.mid, this.rays, this.core]);
+
+      // Velocity — high & changes direction frequently to feel "tricky"
+      this.vx = (Math.random() < 0.5 ? -1 : 1) * (220 + Math.random() * 120);
+      this.vy = (Math.random() - 0.5) * 240;
+      this.changeT = 0;
+    }
+    _drawRays(rot) {
+      this.rays.clear();
+      this.rays.fillStyle(0xffffff, 0.85);
+      const spikes = 8;
+      for (let i = 0; i < spikes; i++) {
+        const a = rot + (i / spikes) * Math.PI * 2;
+        const r1 = 14, r2 = 32;
+        const x0 = Math.cos(a) * r1, y0 = Math.sin(a) * r1;
+        const x1 = Math.cos(a + 0.18) * r1, y1 = Math.sin(a + 0.18) * r1;
+        const xm = Math.cos(a + 0.09) * r2, ym = Math.sin(a + 0.09) * r2;
+        this.rays.beginPath();
+        this.rays.moveTo(x0, y0);
+        this.rays.lineTo(xm, ym);
+        this.rays.lineTo(x1, y1);
+        this.rays.closePath();
+        this.rays.fillPath();
+      }
+    }
+    update(dt, px, py, time) {
+      this.t += dt * 6;
+      this.life -= dt * 1000;
+      // Random direction changes
+      this.changeT += dt;
+      if (this.changeT > 0.6 + Math.random() * 0.6) {
+        this.changeT = 0;
+        this.vx = (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 160);
+        this.vy = (Math.random() - 0.5) * 320;
+      }
+      // Slight pull toward arc above-and-around player so it crosses the screen
+      // Add wobble for tricky catch
+      this.x += this.vx * dt + Math.sin(this.t) * 30 * dt;
+      this.y += this.vy * dt + Math.cos(this.t * 1.3) * 40 * dt;
+      // Keep inside playfield vertically
+      if (this.y < 60) this.vy = Math.abs(this.vy);
+      if (this.y > this.scene.H - 60) this.vy = -Math.abs(this.vy);
+
+      this.container.x = this.x;
+      this.container.y = this.y;
+      this._drawRays(time * 0.004);
+      // Pulsing core
+      const p = 1 + Math.sin(time * 0.018) * 0.18;
+      this.core.setScale(p);
+      this.mid.setScale(1 + Math.sin(time * 0.012) * 0.10);
+    }
+    collect(scene) {
+      // Brief sparkle
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const sp = scene.add.circle(this.x, this.y, 4, 0xffffff, 1).setDepth(19);
+        scene.tweens.add({
+          targets: sp,
+          x: this.x + Math.cos(a) * 60,
+          y: this.y + Math.sin(a) * 60,
+          alpha: 0, duration: 380, ease: "Sine.out",
+          onComplete: () => sp.destroy(),
+        });
+      }
+      this.container.destroy();
+    }
+    destroy() { this.container.destroy(); }
+  }
+
+  // Helper: distance from point (px,py) to segment (ax,ay)-(bx,by)
+  function ptSegDist(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+    let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  // ============================================================
+  // BOOT
+  // ============================================================
+  const params = new URLSearchParams(window.location.search);
+  const startScene = params.get("scene") === "flight" ? "Flight" : "Cinematic";
+  const skipIntro = params.get("intro") === "off" || startScene === "Flight";
+
+  class BootScene extends Phaser.Scene {
+    constructor() { super("Boot"); }
+    preload() {
+      for (const k in POSE) this.load.image(`pose_${k}`, POSE[k]);
+      this.load.image("encounter", ENCOUNTER);
+    }
+    create() { this.scene.start(startScene); }
+  }
+  const config = {
+    type: Phaser.AUTO,
+    parent: "game",
+    backgroundColor: "#0a0a14",
+    width: window.innerWidth,
+    height: window.innerHeight,
+    scale: {
+      mode: Phaser.Scale.RESIZE,
+      autoCenter: Phaser.Scale.CENTER_BOTH,
+    },
+    scene: [BootScene, CinematicScene, FlightScene],
+  };
+
+  // ============================================================
+  // INTRO MP4 -> Phaser handoff
+  // ============================================================
+  function bootGame() {
+    if (window.__game) return;
+    window.__game = new Phaser.Game(config);
+  }
+  function dismissIntro() {
+    const el = document.getElementById("intro");
+    if (!el || el.classList.contains("hidden")) return;
+    el.classList.add("hidden");
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 900);
+    bootGame();
+  }
+
+  if (skipIntro) {
+    const el = document.getElementById("intro");
+    if (el) el.parentNode.removeChild(el);
+    bootGame();
+  } else {
+    const v = document.getElementById("intro-video");
+    const skipBtn = document.getElementById("intro-skip");
+    skipBtn.addEventListener("click", dismissIntro);
+    v.addEventListener("ended", dismissIntro);
+    v.addEventListener("click", dismissIntro);
+
+    // Comic-book "HELP! HELP!" bubble — upper-right, away from creature's face
+    const helpBubble = document.getElementById("help-bubble");
+    const popHelp = (text) => {
+      helpBubble.classList.remove("show");
+      void helpBubble.offsetWidth;
+      helpBubble.textContent = text;
+      helpBubble.classList.add("show");
+    };
+    setTimeout(() => popHelp("HELP!  HELP!"), 900);
+    setTimeout(() => popHelp("HELP!!"), 2700);
+    setTimeout(() => { helpBubble.classList.remove("show"); }, 4400);
+
+    let loaded = false;
+    v.addEventListener("loadeddata", () => { loaded = true; });
+    v.addEventListener("error", () => {
+      console.warn("Intro video failed to load, skipping.");
+      dismissIntro();
+    });
+    setTimeout(() => {
+      if (!loaded) {
+        console.warn("Intro video took too long; skipping.");
+        dismissIntro();
+      }
+    }, 4000);
+    const tryPlay = () => {
+      const p = v.play && v.play();
+      if (p && p.catch) {
+        p.catch(err => {
+          console.warn("Autoplay blocked:", err);
+          const tapHint = document.createElement("div");
+          tapHint.id = "tap-hint";
+          tapHint.style.cssText = "position:absolute;inset:0;z-index:102;display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-style:italic;background:rgba(0,0,0,0.35);cursor:pointer;";
+          tapHint.textContent = "▶ click to begin";
+          tapHint.addEventListener("click", () => {
+            tapHint.remove();
+            v.play().catch(() => dismissIntro());
+          });
+          document.getElementById("intro").appendChild(tapHint);
+        });
+      }
+    };
+    tryPlay();
+    setTimeout(() => {
+      if (v.paused && v.currentTime < 0.1 && !document.getElementById("tap-hint")) {
+        v.play().catch(() => {
+          const tapHint = document.createElement("div");
+          tapHint.id = "tap-hint";
+          tapHint.style.cssText = "position:absolute;inset:0;z-index:102;display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-style:italic;background:rgba(0,0,0,0.35);cursor:pointer;";
+          tapHint.textContent = "▶ click to begin";
+          tapHint.addEventListener("click", () => { tapHint.remove(); v.play(); });
+          document.getElementById("intro").appendChild(tapHint);
+        });
+      }
+    }, 600);
+  }
+  </script>
+</body>
+</html>

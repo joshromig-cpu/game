@@ -1,0 +1,50 @@
+[
+  {
+    "name": "recovered_idle",
+    "file": "recovered_idle.png",
+    "w": 1161,
+    "h": 648
+  },
+  {
+    "name": "middle_glide",
+    "file": "middle_glide.png",
+    "w": 1507,
+    "h": 762
+  },
+  {
+    "name": "max_up_stroke",
+    "file": "max_up_stroke.png",
+    "w": 1197,
+    "h": 948
+  },
+  {
+    "name": "max_down_stroke",
+    "file": "max_down_stroke.png",
+    "w": 1230,
+    "h": 784
+  },
+  {
+    "name": "diving_down",
+    "file": "diving_down.png",
+    "w": 1095,
+    "h": 758
+  },
+  {
+    "name": "attack_recoil",
+    "file": "attack_recoil.png",
+    "w": 1220,
+    "h": 653
+  },
+  {
+    "name": "charging_up",
+    "file": "charging_up.png",
+    "w": 1304,
+    "h": 938
+  },
+  {
+    "name": "firing",
+    "file": "firing.png",
+    "w": 1094,
+    "h": 725
+  }
+]
