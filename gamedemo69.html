@@ -2665,48 +2665,14 @@ class ShadowCloud {
     const cfg = ENEMIES.SHADOW_CLOUD;
     const r = 34;
 
-    // Main body — watercolor cloud sprite (alternates between pulse1/pulse2 for breathing)
+    // Main body — procedural inverted-Level1 cloud (no sprites to avoid flickering)
     this.container = scene.add.container(x, y);
 
-    const useSprite = scene.textures.exists('cloud-pulse1') && scene.textures.exists('cloud-pulse2');
-    if (useSprite) {
-      // Painterly cloud cropped from the backdrop — already includes painted eyes.
-      // 10% smaller than before, fully solid (no transparency pulse), with a
-      // thick black silhouette outline behind for a bold, readable shape.
-      const CW = 110 * 0.9, CH = 76 * 0.9;
-
-      this.bodySprite  = scene.add.image(0, 0, 'cloud-pulse1').setDisplaySize(CW, CH);
-      this.bodySpriteB = scene.add.image(0, 0, 'cloud-pulse2').setDisplaySize(CW, CH).setVisible(false);
-      this.container.add([this.bodySprite, this.bodySpriteB]);
-
-      // Clean cartoon outline that traces the actual painted cloud silhouette
-      // (uses Phaser's pre-FX Glow with outerStrength 0 + a thin black stroke).
-      // Falls back gracefully if FX pipeline isn't available.
-      try {
-        if (this.bodySprite.preFX && this.bodySprite.preFX.addGlow) {
-          this.bodySprite.preFX.setPadding(6);
-          this.bodySprite.preFX.addGlow(0x000000, 2, 0, false, 0.1, 6);
-        }
-      } catch (_) {}
-
-      // Golden tint for convertible clouds — warm yellow wash
-      if (this.isGolden) {
-        this.bodySprite.setTint(0xffe07a);
-        this.bodySpriteB.setTint(0xffe07a);
-      }
-
-      // No transparency pulse — clouds stay fully solid.
-    } else {
-      // Fallback: procedural circles
-      const r = 34;
-      const bc1 = this.isGolden ? 0xffe89a : cfg.BODY_COLOR_1;
-      const bc2 = this.isGolden ? 0xfff3b8 : cfg.BODY_COLOR_2;
-      const bc3 = this.isGolden ? 0xf7d770 : cfg.BODY_COLOR_3;
-      const body1 = scene.add.circle(-18, 6, r * 0.66, bc1, 1);
-      const body2 = scene.add.circle(4, 0, r * 0.78, bc2, 1);
-      const body3 = scene.add.circle(24, 8, r * 0.58, bc3, 1);
-      this.container.add([body1, body2, body3]);
-    }
+    // Draw the cloud body using inverted Level1 palette — dark shadowy cloud
+    const cloudG = scene.add.graphics();
+    ShadowCloud._drawInvertedCloud(cloudG, 0, 0, 1.0, this.isGolden);
+    this.container.add(cloudG);
+    this._cloudGfx = cloudG;
 
     // Make convertible clouds obvious — large aura, pulsing ring outline, and an orbiting heart icon
     if (this.isGolden) {
@@ -2737,28 +2703,8 @@ class ShadowCloud {
       this._goldenHeartOrbit = 0;
     }
 
-    // Eye overlay — only drawn for procedural fallback. The cropped painted
-    // cloud sprites already include eyes baked in.
-    if (!useSprite) {
-      const eyeY  = 4;
-      const eyeDx = 14;
-      const eyeR  = r * 0.22;
-      const glowL = scene.add.circle(-eyeDx, eyeY, eyeR * 1.9, 0xffe066, 0.35);
-      const glowR = scene.add.circle( eyeDx, eyeY, eyeR * 1.9, 0xffe066, 0.35);
-      const irisL = scene.add.circle(-eyeDx, eyeY, eyeR, 0xffd84a, 1);
-      const irisR = scene.add.circle( eyeDx, eyeY, eyeR, 0xffd84a, 1);
-      const coreL = scene.add.circle(-eyeDx, eyeY, eyeR * 0.55, 0xfff7c2, 1);
-      const coreR = scene.add.circle( eyeDx, eyeY, eyeR * 0.55, 0xfff7c2, 1);
-      const pupL  = scene.add.circle(-eyeDx + 1, eyeY + 1, eyeR * 0.22, 0x2a1a05, 1);
-      const pupR  = scene.add.circle( eyeDx + 1, eyeY + 1, eyeR * 0.22, 0x2a1a05, 1);
-      this.container.add([glowL, glowR, irisL, irisR, coreL, coreR, pupL, pupR]);
-      scene.tweens.add({
-        targets: [glowL, glowR],
-        alpha: 0.55, scale: 1.15,
-        duration: 1200 + Math.random() * 400,
-        yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-      });
-    }
+    // Recharge bar — rendered above the cloud in world space, tracks beam cooldown
+    this._rechargeBarGfx = scene.add.graphics().setDepth(16);
 
     // Physics body
     this.container.setSize(cfg.WIDTH, cfg.HEIGHT);
@@ -2842,12 +2788,14 @@ class ShadowCloud {
       let myIdx = awakeClouds.indexOf(this);
       if (myIdx < 0) myIdx = 0;
       const n = Math.max(1, awakeClouds.length);
-      // Spread across an arc above the player: -120deg .. -60deg from horizontal
-      // (i.e. 240..300 in screen coords where -y is up). We use angles measured
-      // from the player with 0 = right, -PI/2 = directly above.
-      const ARC_START = -Math.PI * 0.85;   // upper-left
-      const ARC_END   = -Math.PI * 0.15;   // upper-right
-      const slotT = n === 1 ? 0.5 : myIdx / (n - 1);
+      // Alternate: even-indexed clouds attack from above, odd-indexed from below
+      // so the player faces threats on both sides simultaneously.
+      const attackFromAbove = (myIdx % 2 === 0);
+      const ARC_START = attackFromAbove ? -Math.PI * 0.85 : Math.PI * 0.15;
+      const ARC_END   = attackFromAbove ? -Math.PI * 0.15 : Math.PI * 0.85;
+      const halfCount = attackFromAbove ? Math.ceil(n / 2) : Math.floor(n / 2);
+      const halfIdx   = attackFromAbove ? Math.floor(myIdx / 2) : Math.floor((myIdx - 1) / 2);
+      const slotT = halfCount <= 1 ? 0.5 : Phaser.Math.Clamp(halfIdx / (halfCount - 1), 0, 1);
       const slotAngle = ARC_START + (ARC_END - ARC_START) * slotT;
       const ORBIT_RADIUS = cfg.CHASE_FOLLOW_HEIGHT || 140;
       const targetX = playerX + Math.cos(slotAngle) * ORBIT_RADIUS;
@@ -2944,8 +2892,11 @@ class ShadowCloud {
       this.goldenHeart.setScale(1 + Math.sin(time * 0.008) * 0.18);
     }
 
-    const beamOriginX = this.container.x - 6;
-    const beamOriginY = this.container.y + 36;
+    const beamOriginX = this.container.x;
+    // Fire from whichever face points toward the player
+    const beamOriginY = this.container.y < playerY
+      ? this.container.y + 36   // cloud is above player: beam exits bottom
+      : this.container.y - 36;  // cloud is below player: beam exits top
 
     // --- BEAM STATE MACHINE ---
     // Only fire beams while awake — dormant clouds are passive scenery.
@@ -2969,6 +2920,31 @@ class ShadowCloud {
       }
     } else {
       this.shadowImpactGfx.clear();
+    }
+
+    // --- BEAM RECHARGE BAR ---
+    // Small progress bar floating just above the cloud body — shows when the
+    // next beam is ready. Fades from empty (right after firing) to full (ready).
+    this._rechargeBarGfx.clear();
+    if (this.alive && this.beamState === 'idle' && this._rechargeBarGfx) {
+      const maxCooldown = 3000; // approximate max cooldown (conservative)
+      const remaining = Math.max(0, this.nextBeamAt - now);
+      const progress = Phaser.Math.Clamp(1 - remaining / maxCooldown, 0, 1);
+      const BAR_W = 48, BAR_H = 5;
+      const bx = this.container.x - BAR_W / 2;
+      const by = this.container.y - 52; // above cloud body + wings
+      // Background track
+      this._rechargeBarGfx.fillStyle(0x0a0a18, 0.75);
+      this._rechargeBarGfx.fillRect(bx - 1, by - 1, BAR_W + 2, BAR_H + 2);
+      // Fill: dark purple → vivid magenta as it fills
+      const fillColor = progress < 0.6 ? 0x551177 : (progress < 0.9 ? 0xaa33cc : 0xff44ff);
+      this._rechargeBarGfx.fillStyle(fillColor, 0.92);
+      this._rechargeBarGfx.fillRect(bx, by, BAR_W * progress, BAR_H);
+      // Bright tip spark when nearly full
+      if (progress > 0.85) {
+        this._rechargeBarGfx.fillStyle(0xffffff, (progress - 0.85) / 0.15 * 0.9);
+        this._rechargeBarGfx.fillRect(bx + BAR_W * progress - 3, by, 4, BAR_H);
+      }
     }
   }
 
@@ -3412,28 +3388,24 @@ class ShadowCloud {
   _die() {
     this.alive = false;
     this.stopBeam();
-    // Cleanup beam graphics
+    // Cleanup beam + recharge graphics
     this.beamTelegraphGfx.destroy();
     this.beamGlowGfx.destroy();
     this.beamCoreGfx.destroy();
     this.shadowImpactGfx.destroy();
+    if (this._rechargeBarGfx) { this._rechargeBarGfx.destroy(); this._rechargeBarGfx = null; }
 
     const cx = this.container.x;
     const cy = this.container.y;
     const scene = this.scene;
 
-    // Swap body sprite to the wispy "defeat" frame for the death sequence.
-    // Kill the idle breathing tweens first so the alpha doesn't keep
-    // pulsing the defeat puff in/out while it's animating outward.
-    if (this.bodySprite) scene.tweens.killTweensOf(this.bodySprite);
-    if (this.bodySpriteB) scene.tweens.killTweensOf(this.bodySpriteB);
-    if (this.bodySprite && scene.textures.exists('cloud-defeat')) {
-      this.bodySprite.setTexture('cloud-defeat');
-      this.bodySprite.setAlpha(1);
-      // Make the defeat puff a touch larger than the idle body so the
-      // disintegrating wisps read clearly against the original silhouette.
-      this.bodySprite.setDisplaySize(140, 96);
-      if (this.bodySpriteB) this.bodySpriteB.setAlpha(0);
+    // Dissolve the procedural cloud body on death — scale up + fade out
+    if (this._cloudGfx) {
+      scene.tweens.add({
+        targets: this._cloudGfx,
+        scaleX: 1.6, scaleY: 1.6, alpha: 0,
+        duration: 600, ease: 'Cubic.easeOut',
+      });
     }
 
     if (this.isGolden) {
@@ -3694,6 +3666,73 @@ class ShadowCloud {
     }
   }
 }
+
+/* ===== ShadowCloud static helpers ===== */
+ShadowCloud._drawInvertedCloud = function(gfx, px, py, s, golden) {
+  s = s || 1;
+  // Colors are the mathematical inverse of Level1's drawCloud palette.
+  // Dark near-black body with amber/blue eyes — looks like a photographic
+  // negative of the friendly clouds, immediately readable as a threat.
+  const c1 = 0x0b0e17;    // inv of 0xf4f1e8
+  const c2 = 0x030509;    // inv of 0xfcfaf0
+  const c3 = 0x0f121d;    // inv of 0xf0ede2
+  const shad = 0x2f333f;  // inv of 0xd0ccc0
+  // "Shadow" glow underneath (inverted from the normal dark drop-shadow)
+  gfx.fillStyle(0xf5f5ed, 0.10);
+  gfx.fillEllipse(px, py + 22 * s, 50 * s, 8 * s);
+  // Main body puffs — same geometry as Level1 cloud
+  gfx.fillStyle(c3, 0.72);
+  gfx.fillCircle(px - 22 * s, py + 8 * s, 12 * s);
+  gfx.fillCircle(px + 26 * s, py + 9 * s, 10 * s);
+  gfx.fillStyle(c1, 0.92);
+  gfx.fillCircle(px - 16 * s, py + 4 * s, 16 * s);
+  gfx.fillCircle(px + 20 * s, py + 6 * s, 14 * s);
+  gfx.fillStyle(c2, 0.96);
+  gfx.fillCircle(px + 2 * s, py - 2 * s, 20 * s);
+  gfx.fillStyle(c1, 0.87);
+  gfx.fillCircle(px - 6 * s, py + 2 * s, 14 * s);
+  gfx.fillCircle(px + 12 * s, py + 1 * s, 13 * s);
+  gfx.fillStyle(c2, 0.82);
+  gfx.fillCircle(px - 4 * s, py - 10 * s, 10 * s);
+  gfx.fillCircle(px + 8 * s, py - 8 * s, 8 * s);
+  // Highlight (inverted shadow)
+  gfx.fillStyle(shad, 0.18);
+  gfx.fillCircle(px - 10 * s, py + 10 * s, 12 * s);
+  gfx.fillCircle(px + 14 * s, py + 10 * s, 10 * s);
+  // Eye — inverted palette: dark sclera, amber iris, deep-blue "pupil", bright centre
+  gfx.fillStyle(0x000000, 0.28);
+  gfx.fillCircle(px + 1 * s, py + 2 * s, 13 * s);
+  gfx.fillStyle(0x855b27, 1);    // inv of 0x7aa4d8 blue → amber
+  gfx.fillCircle(px + 2 * s, py + 3 * s, 10 * s);
+  gfx.fillStyle(0xa77747, 0.55); // inv of 0x5888b8
+  gfx.fillCircle(px + 4 * s, py + 5 * s, 7 * s);
+  gfx.fillStyle(0x082288, 1);    // inv of 0xf7dd77 gold → deep indigo
+  gfx.fillCircle(px + 2 * s, py + 3 * s, 5 * s);
+  gfx.fillStyle(0xd0cebf, 1);    // inv of 0x2f3140 dark → bright cream pupil
+  gfx.fillCircle(px + 2 * s, py + 3 * s, 2.5 * s);
+  gfx.fillStyle(0x000008, 0.7);  // inv of 0xffffff — dark highlight dot
+  gfx.fillCircle(px + 0 * s, py + 1 * s, 1.5 * s);
+  if (golden) {
+    // Dark-gold lining for convertible variants
+    gfx.lineStyle(2, 0xcc8800, 0.9);
+    gfx.strokeCircle(px - 22 * s, py + 8 * s, 12 * s);
+    gfx.strokeCircle(px + 26 * s, py + 9 * s, 10 * s);
+    gfx.strokeCircle(px - 16 * s, py + 4 * s, 16 * s);
+    gfx.strokeCircle(px + 20 * s, py + 6 * s, 14 * s);
+    gfx.strokeCircle(px + 2 * s, py - 2 * s, 20 * s);
+    gfx.strokeCircle(px - 4 * s, py - 10 * s, 10 * s);
+    gfx.strokeCircle(px + 8 * s, py - 8 * s, 8 * s);
+    gfx.lineStyle(1, 0xcc8800, 0.3);
+    gfx.strokeCircle(px, py, 36 * s);
+  } else {
+    // Void tendrils underneath (olive-inverted from purple)
+    gfx.lineStyle(1.5, 0x839052, 0.38);
+    for (let i = -2; i <= 2; i++) {
+      const tx = px + i * 8 * s;
+      gfx.lineBetween(tx, py + 14 * s, tx + i * 2 * s, py + 22 * s);
+    }
+  }
+};
 
 /* ===== 019d844e-Spangerell.js ===== */
 // Spangerell — ground enemy, part venus flytrap / anteater / orchid
