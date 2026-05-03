@@ -6789,31 +6789,48 @@ class Level3Scene extends Phaser.Scene {
     // --- Camera follow (Level 3) ---
     {
       const cam = this.cameras.main;
-      cam.startFollow(this.player.container, true, 0.12, 0.12);
+      const followTarget = this.player.sprite || this.player.container;
+      cam.startFollow(followTarget, true, 0.12, 0.12);
       cam.setDeadzone(cam.width * 0.25, cam.height * 0.15);
     }
-    this.physics.add.collider(this.player.container, this.platforms, null, (sprite, plat) => {
-      // jump-through: only collide when falling and player above platform top
+    const _pColl = this.player.sprite || this.player.container;
+    this.physics.add.collider(_pColl, this.platforms, null, (sprite, plat) => {
       const pBody = sprite.body;
       const platTop = plat.body.y;
       return pBody.velocity.y >= 0 && (pBody.bottom - 6) <= platTop;
     });
     // Grant wings
     this.player.hasWings = true;
-    const wingG = this.add.graphics().setDepth((this.player.container.depth || 20) - 0.1);
+    const wingG = this.add.graphics().setDepth(19);
     this._wingG = wingG;
 
     // (Interactive sky-spire platforms are now woven into the main spire grid above.)
 
 
     // --- HUD ---
+    if (!this.scene.isActive('HUDScene')) this.scene.launch('HUDScene');
     this.bossHpMax = 100; this.bossHp = 100;
     const hpBg = this.add.rectangle(W / 2, 40, 600, 18, 0x000000, 0.5).setScrollFactor(0).setDepth(100);
     this.hpBar = this.add.rectangle(W / 2 - 296, 40, 592, 12, 0xff4060, 1).setScrollFactor(0).setDepth(101);
     this.hpBar.setOrigin(0, 0.5);
-    this.add.text(W / 2, 18, 'THE WHITE DOPPELGANGER', {
-      fontSize: '14px', fontFamily: 'Georgia, serif', color: '#ffffff',
+    this.add.text(W / 2, 18, '— THE WHITE DOPPELGANGER —', {
+      fontSize: '14px', fontFamily: 'Georgia, serif', color: '#ccddff', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(101);
+
+    // Player death listener
+    this.events.on('playerDied', () => {
+      if (!this._deathHandledL3 && !this._gamePaused) {
+        this._deathHandledL3 = true;
+        this._handlePlayerDeathL3();
+      }
+    });
+
+    // Controls hint
+    const cam3 = this.cameras.main;
+    const hint3 = this.add.text(cam3.width / 2, cam3.height - 18, 'A/D move · SPACE/W float · Z shoot · click/G grapple', {
+      fontSize: '11px', fontFamily: 'sans-serif', color: '#cceeff', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
+    this.time.delayedCall(5000, () => this.tweens.add({ targets: hint3, alpha: 0, duration: 1200, onComplete: () => hint3.destroy() }));
 
     // --- Boss (white doppelganger) ---
     this.boss = this._createBoss(W * 0.7, 380);
@@ -6881,65 +6898,90 @@ class Level3Scene extends Phaser.Scene {
     return c;
   }
 
+  _pSprite() {
+    // Player changed from .container to .sprite — support both for back-compat
+    return (this.player && (this.player.sprite || this.player.container)) || null;
+  }
+
   update(time, delta) {
     if (!this.player) return;
-    // Touchless input — Player.update needs cursors
-    const cursors = this.input.keyboard.createCursorKeys();
+    const pObj = this._pSprite();
+    if (!pObj) return;
+
     if (!this._keys) {
-      this._keys = this.input.keyboard.addKeys('W,A,S,D,SPACE,X,Z');
+      this._keys = this.input.keyboard.addKeys('W,A,S,D,SPACE,X,Z,SHIFT');
     }
     const k = this._keys;
+    const cursors = this._cursors || (this._cursors = this.input.keyboard.createCursorKeys());
     const merged = {
       left:  { isDown: cursors.left.isDown  || k.A.isDown },
       right: { isDown: cursors.right.isDown || k.D.isDown },
       up:    { isDown: cursors.up.isDown    || k.W.isDown || k.SPACE.isDown },
       down:  { isDown: cursors.down.isDown  || k.S.isDown },
       space: { isDown: cursors.space?.isDown || k.SPACE.isDown },
-      shift: cursors.shift,
+      shift: { isDown: cursors.shift?.isDown || k.SHIFT.isDown },
+      shoot: k.Z, backstep: { isDown: false, justDown: false },
     };
     this.player.update(merged);
 
     try { window.CMFA && window.CMFA.update(this, time, delta); } catch (e) {}
 
-    // WINGS: hold UP/W to gently rise (free flight)
-    if (this.player.hasWings && (cursors.up.isDown || k.W.isDown)) {
-      const vy = this.player.body.velocity.y;
-      if (vy > -180) this.player.body.setVelocityY(vy - 26);
+    // WINGS: hold UP/W/SPACE to gently rise (free flight in boss arena)
+    if (this.player.hasWings && (cursors.up.isDown || k.W.isDown || k.SPACE.isDown)) {
+      const body = this.player.body || (pObj && pObj.body);
+      if (body && body.velocity.y > -200) body.setVelocityY(body.velocity.y - 28);
     }
     // Wing render (procedural, follows player)
-    if (this._wingG && this.player.container) {
+    if (this._wingG && pObj) {
       this._wingG.clear();
-      const px = this.player.container.x, py = this.player.container.y;
+      const px = pObj.x, py = pObj.y;
       const flap = Math.sin(time * 0.012) * 0.2;
       this._wingG.fillStyle(0xffffff, 0.85);
-      // left wing
       this._wingG.fillEllipse(px - 22, py - 8 + flap * 10, 28, 14 + flap * 4);
       this._wingG.fillEllipse(px - 28, py - 2 + flap * 8, 22, 10);
-      // right wing
       this._wingG.fillEllipse(px + 22, py - 8 - flap * 10, 28, 14 - flap * 4);
       this._wingG.fillEllipse(px + 28, py - 2 - flap * 8, 22, 10);
-      // gold outline
       this._wingG.lineStyle(1.5, 0xffd97a, 0.9);
       this._wingG.strokeEllipse(px - 22, py - 8 + flap * 10, 28, 14 + flap * 4);
       this._wingG.strokeEllipse(px + 22, py - 8 - flap * 10, 28, 14 - flap * 4);
     }
-    // Allow shooting toward boss with Z/X
-    if ((k.Z.isDown || k.X.isDown) && this.player.arsenal && this.player.arsenal.fire) {
-      const dirX = this.boss.x > this.player.container.x ? 1 : -1;
-      const dirY = (this.boss.y - this.player.container.y) / Math.max(1, Math.abs(this.boss.x - this.player.container.x));
-      this.player.arsenal.fire(this.player.container.x, this.player.container.y, dirX, Phaser.Math.Clamp(dirY, -1, 1));
+    // Shoot toward boss with Z key or auto-aim when X is held
+    if (k.Z.isDown && !this._zWasDown && pObj && this.boss) {
+      const dirX = this.boss.x > pObj.x ? 1 : -1;
+      const dy = (this.boss.y - pObj.y);
+      const dx = Math.abs(this.boss.x - pObj.x) || 1;
+      this.arsenal && this.arsenal.fire
+        ? this.arsenal.fire(pObj.x, pObj.y, dirX, Phaser.Math.Clamp(dy / dx, -1, 1))
+        : this.player.arsenal && this.player.arsenal.fire && this.player.arsenal.fire(pObj.x, pObj.y, dirX, Phaser.Math.Clamp(dy / dx, -1, 1));
+    }
+    this._zWasDown = k.Z.isDown;
+
+    // Player death check in Level 3
+    if (!this._deathHandledL3 && this.player && this.player.isDead) {
+      this._deathHandledL3 = true;
+      this._handlePlayerDeathL3();
     }
 
     // --- Boss AI ---
     if (this.boss && this.bossHp > 0) {
       const b = this.boss;
+      const pObj2 = this._pSprite();
+      if (!pObj2) return;
       // Mirror player horizontally — drift toward mirrored x
-      const mirrorX = (this.cameras.main.width - this.player.container.x);
+      const mirrorX = (1600 - pObj2.x);
       const targetX = Phaser.Math.Clamp(mirrorX + (b.phase === 2 ? Math.sin(time * 0.004) * 200 : 0), 100, 1500);
       const driftSpeed = b._dashing ? 0 : (b.phase === 2 ? 1.6 : 1.0);
       b.x += Phaser.Math.Clamp(targetX - b.x, -2.5, 2.5) * driftSpeed;
       // Bob vertically
       if (!b._dashing) b.y = b.targetY + Math.sin(time * 0.0025) * 40;
+      // Phase 2: pulse aura between hot-pink and violet for dramatic effect
+      if (b.phase === 2 && b.aura) {
+        const t2 = (Math.sin(time * 0.006) + 1) * 0.5;
+        const r = Math.round(0xff * (0.95 + t2 * 0.05));
+        const g = Math.round(0x5a * (1 - t2 * 0.5));
+        const bv = Math.round(0x8a + t2 * 0x75);
+        b.aura.setFillStyle((r << 16) | (g << 8) | bv);
+      }
       // Fire (telegraphed)
       this._bossFireTimer -= delta;
       if (this._bossFireTimer <= 0 && !b._dashing) {
@@ -6963,31 +7005,34 @@ class Level3Scene extends Phaser.Scene {
     }
 
     // --- Boss bullets ---
+    const pObjB = this._pSprite();
     for (let i = this.bossBullets.length - 1; i >= 0; i--) {
       const bb = this.bossBullets[i];
       if (!bb || !bb.active) { this.bossBullets.splice(i, 1); continue; }
       bb.x += bb.vx * delta * 0.001;
       bb.y += bb.vy * delta * 0.001;
-      // hit player
-      const dx = bb.x - this.player.container.x;
-      const dy = bb.y - this.player.container.y;
-      if (dx * dx + dy * dy < 28 * 28) {
-        if (this.player.takeDamage) this.player.takeDamage(8);
-        try { window.SOUND && window.SOUND.damage(); } catch(_){}
-        this.cameras.main.shake(120, 0.008);
-        bb.destroy();
-        this.bossBullets.splice(i, 1);
-        continue;
+      if (pObjB) {
+        const dx = bb.x - pObjB.x;
+        const dy = bb.y - pObjB.y;
+        if (dx * dx + dy * dy < 28 * 28) {
+          if (this.player.takeDamage) this.player.takeDamage(8);
+          try { window.SOUND && window.SOUND.damage(); } catch(_){}
+          this.cameras.main.shake(120, 0.008);
+          bb.destroy();
+          this.bossBullets.splice(i, 1);
+          continue;
+        }
       }
-      // out of bounds
       if (bb.x < -40 || bb.x > 1640 || bb.y < -40 || bb.y > 940) {
         bb.destroy(); this.bossBullets.splice(i, 1);
       }
     }
 
     // --- Player bullets vs boss ---
-    if (this.player.arsenal && this.player.arsenal.weapons) {
-      for (const wpn of Object.values(this.player.arsenal.weapons)) {
+    const ars = this.arsenal || (this.player && this.player.arsenal);
+    if (ars && ars.weapons) {
+      const wpnList = Array.isArray(ars.weapons) ? ars.weapons : Object.values(ars.weapons);
+      for (const wpn of wpnList) {
         if (!wpn || !wpn.bullets) continue;
         for (let i = wpn.bullets.length - 1; i >= 0; i--) {
           const bul = wpn.bullets[i];
@@ -7004,9 +7049,45 @@ class Level3Scene extends Phaser.Scene {
     }
   }
 
+  _handlePlayerDeathL3() {
+    this._gamePaused = true;
+    this.cameras.main.shake(300, 0.02);
+    this.cameras.main.flash(200, 255, 60, 90);
+    // Brief death screen, then respawn in arena
+    const W = 1600, H = 900;
+    const overlay = this.add.rectangle(W / 2, H / 2, W, H, 0x0a0a1a, 0).setScrollFactor(0).setDepth(300);
+    const msg = this.add.text(W / 2, H / 2, 'Luna fell...\n\nBut the song isn\'t over.', {
+      fontFamily: 'Georgia, serif', fontSize: '32px', color: '#ff84c8', align: 'center',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(301).setAlpha(0);
+    this.tweens.add({ targets: overlay, alpha: 0.8, duration: 800 });
+    this.tweens.add({ targets: msg, alpha: 1, duration: 800, delay: 400 });
+    this.time.delayedCall(2800, () => {
+      this.tweens.add({ targets: [overlay, msg], alpha: 0, duration: 600, onComplete: () => {
+        overlay.destroy(); msg.destroy();
+        this._gamePaused = false;
+        this._deathHandledL3 = false;
+        // Respawn player at starting position
+        const pObj = this._pSprite();
+        if (pObj) {
+          pObj.setPosition(220, 600);
+          if (pObj.body) pObj.body.setVelocity(0, 0);
+        }
+        if (this.player) {
+          this.player.isDead = false;
+          this.player.health = this.player.maxHealth || 100;
+          this.player._invincible = true;
+          this.time.delayedCall(2000, () => { if (this.player) this.player._invincible = false; });
+        }
+        this.events.emit('playerHealed', this.player.health, this.player.maxHealth);
+        this.cameras.main.fadeIn(400, 0, 0, 0);
+      }});
+    });
+  }
+
   _bossTelegraphedFire(x, y) {
-    if (!this.player || !this.player.container) return;
-    const target = this.player.container;
+    if (!this.player) return;
+    const target = this._pSprite();
+    if (!target) return;
     const tx = target.x, ty = target.y;
     // Telegraph line — red glow from boss to predicted player position
     const tel = this.add.graphics().setDepth(17);
@@ -7032,9 +7113,9 @@ class Level3Scene extends Phaser.Scene {
   }
 
   _bossFire(x, y, aimX, aimY) {
-    const target = this.player.container;
-    const ax = (typeof aimX === 'number') ? aimX : target.x;
-    const ay = (typeof aimY === 'number') ? aimY : target.y;
+    const target = this._pSprite();
+    const ax = (typeof aimX === 'number') ? aimX : (target ? target.x : x);
+    const ay = (typeof aimY === 'number') ? aimY : (target ? target.y : y);
     const dx = ax - x, dy = ay - y;
     const m = Math.sqrt(dx * dx + dy * dy) || 1;
     const speed = 380;
@@ -7070,7 +7151,9 @@ class Level3Scene extends Phaser.Scene {
 
   _bossDashAttack() {
     const b = this.boss;
-    if (!b || !this.player || !this.player.container) return;
+    if (!b || !this.player) return;
+    const pTarget = this._pSprite();
+    if (!pTarget) return;
     b._dashing = true;
     // Wind-up flash
     const flash = this.add.graphics().setDepth(19);
@@ -7088,16 +7171,18 @@ class Level3Scene extends Phaser.Scene {
     // After wind-up, lunge to player position
     this.time.delayedCall(420, () => {
       if (!b.active || this.bossHp <= 0) { b._dashing = false; return; }
-      const tx = this.player.container.x, ty = this.player.container.y;
+      const _pObj = this._pSprite();
+      const tx = _pObj ? _pObj.x : b.x, ty = _pObj ? _pObj.y : b.y;
       this.tweens.add({
         targets: b,
         x: tx, y: ty,
         duration: 320, ease: 'Cubic.easeIn',
         onComplete: () => {
           // Damage on impact if still close
-          const dx = b.x - this.player.container.x;
-          const dy = b.y - this.player.container.y;
-          if (dx * dx + dy * dy < 50 * 50 && this.player.takeDamage) {
+          const _pDash = this._pSprite();
+          const dx = b.x - (_pDash ? _pDash.x : b.x);
+          const dy = b.y - (_pDash ? _pDash.y : b.y);
+          if (_pDash && dx * dx + dy * dy < 50 * 50 && this.player.takeDamage) {
             this.player.takeDamage(15);
             this.cameras.main.shake(280, 0.016);
             try { window.SOUND && window.SOUND.damage(); } catch(_){}
@@ -7152,15 +7237,17 @@ class Level3Scene extends Phaser.Scene {
     this.tweens.add({ targets: this.boss, alpha: 0, scale: 0.6, duration: 1200, ease: 'Sine.easeIn',
       onComplete: () => this.boss.destroy() });
     // Pulled into Luna
+    const _pDefeated = this._pSprite();
     this.tweens.add({
       targets: shadow,
-      x: this.player.container.x - this.boss.x,
-      y: this.player.container.y - this.boss.y,
+      x: (_pDefeated ? _pDefeated.x : this.boss.x) - this.boss.x,
+      y: (_pDefeated ? _pDefeated.y : this.boss.y) - this.boss.y,
       scaleX: 0.05, scaleY: 0.05, alpha: 0.4,
       duration: 1800, ease: 'Cubic.easeIn',
       onComplete: () => {
         // brief halo on Luna as the shadow merges
-        const halo = this.add.circle(this.player.container.x, this.player.container.y, 30, 0xffffff, 0.9)
+        const _pHalo = this._pSprite();
+        const halo = this.add.circle(_pHalo ? _pHalo.x : this.boss.x, _pHalo ? _pHalo.y : this.boss.y, 30, 0xffffff, 0.9)
           .setBlendMode(Phaser.BlendModes.ADD).setDepth(70);
         this.tweens.add({ targets: halo, scale: 8, alpha: 0, duration: 900, onComplete: () => halo.destroy() });
         shadow.destroy();
@@ -7182,7 +7269,7 @@ class Level3Scene extends Phaser.Scene {
               try { window.SOUND && window.SOUND.stopMusic(); } catch(_){}
               const next = this.scene.get('CinematicEScene')
                 ? 'CinematicEScene'
-                : (window.GHIBLI_MODE ? 'CinematicCScene' : 'MenuScene');
+                : 'EpilogueScene';
               this.scene.start(next);
             });
           });
@@ -14066,6 +14153,8 @@ class Level2Scene extends Phaser.Scene {
       const stripe = this.add.rectangle(cfg.x, cfg.y - 6, cfg.w - 4, 4, 0xc49a6c, 1).setDepth(3);
       // Static physics body — we refresh it manually each frame
       this.physics.add.existing(rect, true);
+      // Register in cloudPlatforms so the grapple hook can latch onto it
+      if (this.cloudPlatforms) this.cloudPlatforms.add(rect);
       // Collider with player
       this.physics.add.collider(this.player.sprite, rect, null, (playerSprite, plat) => {
         const body = playerSprite.body;
@@ -15607,7 +15696,7 @@ class EpilogueScene extends Phaser.Scene {
       '— CREDITS —',
       '',
       'Story & Direction',
-      'Ernest Aine',
+      'Ernest Aines',
       '',
       'Art & Animation',
       'Hand-painted procedural Phaser',
@@ -15734,7 +15823,7 @@ class HUDScene extends Phaser.Scene {
     // --- Controls hint — smaller, fades sooner so it doesn't crowd play area ---
     const isDesktop = this.sys.game.device.os.desktop;
     const hintText = isDesktop
-      ? 'WASD/Arrows · Space jump (×2) · Shift sprint · Z shoot · X backstep · Q switch'
+      ? 'WASD/Arrows · Space jump (×2) · Shift sprint · Z shoot · X backstep/parry · Q switch'
       : 'Touch controls below';
 
     this.hint = this.add.text(
@@ -15778,7 +15867,8 @@ class HUDScene extends Phaser.Scene {
     // --- Listen for game events on whichever level scene is active ---
     const level1 = this.scene.get('Level1Scene');
     const level2 = this.scene.get('Level2Scene');
-    const levels = [level1, level2].filter(Boolean);
+    const level3 = this.scene.get('Level3Scene');
+    const levels = [level1, level2, level3].filter(Boolean);
 
     levels.forEach((lvl) => {
       lvl.events.on('weaponChanged', (weapon) => {
@@ -15827,6 +15917,9 @@ class HUDScene extends Phaser.Scene {
         });
       });
       lvl.events.on('playerDied', () => {
+        // Level2 handles its own death → revival cinematic, skip HUD overlay
+        const l2 = this.scene.get('Level2Scene');
+        if (l2 && l2._gamePaused) return;
         this._showDeathScreen();
       });
     });
