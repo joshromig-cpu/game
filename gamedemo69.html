@@ -8955,7 +8955,10 @@ class MenuScene extends Phaser.Scene {
       // Mark intro as seen so subsequent loads skip straight past the cinematic.
       try { localStorage.setItem('cmfa_seen_intro', '1'); } catch (e) {}
       this.cameras.main.fadeOut(300, 10, 10, 26);
-      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(window.GHIBLI_MODE ? 'CinematicAScene' : 'Level1Scene'));
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        if (window.GHIBLI_MODE) this.scene.start('CinematicDScene', { next: 'Level1Scene' });
+        else this.scene.start('Level1Scene');
+      });
     };
     this.skipAllLabel.on('pointerdown', skipAll);
     this.input.keyboard.on('keydown-ESC', skipAll);
@@ -9866,7 +9869,8 @@ class MenuScene extends Phaser.Scene {
            cv.style.transition = 'none';
            cv.style.transform = 'none';
            cv.style.filter = 'none';
-            this.scene.start(window.GHIBLI_MODE ? 'CinematicAScene' : 'Level1Scene');
+            if (window.GHIBLI_MODE) this.scene.start('CinematicDScene', { next: 'Level1Scene' });
+            else this.scene.start('Level1Scene');
          };
 
            if (!diveTarget) {
@@ -10870,8 +10874,8 @@ class Sage {
     // into / past the Sage. Once it triggers there's no way to skip past.
     const close = dist < 140;
 
-    // Face the player when nearby.
-    if (this.wise && dist < 220) {
+    // Face the player when nearby (only sprites/images have setFlipX).
+    if (this.wise && dist < 220 && typeof this.wise.setFlipX === 'function') {
       this.wise.setFlipX(dx > 0);
     }
 
@@ -11681,12 +11685,22 @@ class Level1Scene extends Phaser.Scene {
     coinPositions.forEach(([cx, cy]) => {
       // Ensure every coin sits at least 60px above the ground for visibility
       const safeY = Math.min(cy, LEVEL.GROUND_Y - 60);
-      const coin = this.add.circle(cx, safeY, 10, COLORS.COIN, 0.8);
+      const coin = this.add.circle(cx, safeY, 12, COLORS.COIN, 0.9);
       this.coins.add(coin); // staticGroup auto-creates the body
+      // Explicitly size the static body — ensures pickup works even if
+      // updateFromGameObject() reads stale displayWidth on some Phaser builds.
+      // Position body at coin world location, then widen for easier pickup
       coin.body.updateFromGameObject();
+      coin.body.setSize(32, 32, true);
 
-      // Coin glow (visual only)
-      this.add.circle(cx, safeY, 14, COLORS.COIN, 0.1);
+      // Outer glow ring
+      this.add.circle(cx, safeY, 18, COLORS.COIN, 0.12);
+      // Pulse tween so players notice the coin
+      this.tweens.add({
+        targets: coin,
+        scaleX: 1.18, scaleY: 1.18,
+        duration: 700, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+      });
     });
 
     // --- Orbs (beam-suckable collectibles) ---
@@ -12355,6 +12369,22 @@ class Level1Scene extends Phaser.Scene {
       this.player.health = this.player.maxHealth;
       this.events.emit('playerDamaged', this.player.health, this.player.maxHealth);
     }
+
+    // Distance-based coin pickup (backup alongside physics overlap)
+    if (this.coins && this.player) {
+      const cpx = this.player.sprite.x, cpy = this.player.sprite.y;
+      this.coins.children.iterate((coin) => {
+        if (!coin || !coin.active) return;
+        if (Phaser.Math.Distance.Between(cpx, cpy, coin.x, coin.y) < 36) {
+          coin.destroy();
+          this.coinCount++;
+          try { window.SOUND && window.SOUND.collect(); } catch (_) {}
+          this.events.emit('coinCollected', this.coinCount);
+          if (this.colorSaturation) this.colorSaturation.addBonus(0.01);
+        }
+      });
+    }
+
     } catch (err) {
       // [DBG-FREEZE] Surface any error that would otherwise silently halt the game loop.
       console.error('[DBG-FREEZE] L1 update() threw:', err && err.stack ? err.stack : err);
@@ -13803,7 +13833,7 @@ class Level1Scene extends Phaser.Scene {
       });
       try { window.CMFA && window.CMFA.restoreColor(this, 'Level1Scene'); } catch (e) {}
 
-      const hasD = !!this.scene.get('CinematicDScene');
+      const hasA = !!this.scene.get('CinematicAScene');
       const hasB = !!this.scene.get('CinematicBScene');
 
       // Carry over player state into the next scene chain
@@ -13814,8 +13844,9 @@ class Level1Scene extends Phaser.Scene {
       };
 
       let nextKey, payload;
-      if (hasD) {
-        nextKey = 'CinematicDScene';
+      if (hasA) {
+        // CinematicA ("The Drained World") now plays after Level 1 as the consequence beat
+        nextKey = 'CinematicAScene';
         payload = { next: hasB ? 'CinematicBScene' : 'Level2Scene', carry };
       } else if (hasB) {
         nextKey = 'CinematicBScene';
@@ -14981,7 +15012,7 @@ class CinematicBaseScene extends Phaser.Scene {
 class CinematicAScene extends CinematicBaseScene {
   constructor() {
     super('CinematicAScene', {
-      next: 'Level1Scene',
+      next: 'CinematicBScene',
       lines: [
         'In a world drained of colour…',
         'a soul drifted, sealed in glass…',
@@ -17845,14 +17876,26 @@ window.CMFA = (function () {
     }
     _spawn(x, y) {
       const c = this.scene.add.container(x, y).setDepth(8);
-      const halo = this.scene.add.circle(0, 0, 18, 0x9be8ff, 0.18).setBlendMode(Phaser.BlendModes.ADD);
+      // Outer bloom — large, soft glow ring
+      const bloom = this.scene.add.circle(0, 0, 42, 0x9be8ff, 0.22).setBlendMode(Phaser.BlendModes.ADD);
+      // Mid halo — brighter inner ring
+      const halo = this.scene.add.circle(0, 0, 24, 0xe0f8ff, 0.55).setBlendMode(Phaser.BlendModes.ADD);
+      // Core diamond — double-triangle star, larger and vivid
       const core = this.scene.add.graphics();
-      core.fillStyle(0xffffff, 1);
-      core.fillTriangle(0, -10, 8, 6, -8, 6);
-      core.fillTriangle(0, 10, 8, -6, -8, -6);
-      c.add([halo, core]);
-      this.scene.tweens.add({ targets: halo, scale: 1.4, alpha: 0.32, yoyo: true, repeat: -1, duration: 1200 });
-      this.scene.tweens.add({ targets: c, y: y - 6, yoyo: true, repeat: -1, duration: 1600, ease: 'Sine.easeInOut' });
+      core.fillStyle(0xd8f6ff, 1);
+      core.fillTriangle(0, -14, 10, 4, -10, 4);
+      core.fillTriangle(0,  14, 10, -4, -10, -4);
+      // Bright centre dot
+      const dot = this.scene.add.circle(0, 0, 4, 0xffffff, 1).setBlendMode(Phaser.BlendModes.ADD);
+      c.add([bloom, halo, core, dot]);
+      // Breathing bloom
+      this.scene.tweens.add({ targets: bloom, scale: 1.5, alpha: 0.38, yoyo: true, repeat: -1, duration: 900, ease: 'Sine.easeInOut' });
+      // Faster inner pulse
+      this.scene.tweens.add({ targets: halo, scale: 1.3, alpha: 0.9, yoyo: true, repeat: -1, duration: 600, ease: 'Sine.easeInOut' });
+      // Slow rotation on core
+      this.scene.tweens.add({ targets: core, angle: 360, duration: 3200, repeat: -1, ease: 'Linear' });
+      // Bob up and down
+      this.scene.tweens.add({ targets: c, y: y - 10, yoyo: true, repeat: -1, duration: 1400, ease: 'Sine.easeInOut' });
       c.collected = false;
       return c;
     }
