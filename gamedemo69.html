@@ -7612,8 +7612,13 @@ class PreloadScene extends Phaser.Scene {
       // QA, or sharing). Without this flag the game flows normally to the menu.
       const _cineParam = (new URLSearchParams(window.location.search).get('cinematic') || '').toUpperCase();
       const _cineMap = { A: 'CinematicAScene', B: 'CinematicBScene', C: 'CinematicCScene' };
+      const _skipParam = new URLSearchParams(window.location.search).get('skipIntro');
+      const _levelParam = new URLSearchParams(window.location.search).get('level');
+      const _lvlMap = { '1': 'Level1Scene', '2': 'Level2Scene', '3': 'Level3OpeningScene' };
       if (_cineMap[_cineParam] && this.scene.get(_cineMap[_cineParam])) {
         this.scene.start(_cineMap[_cineParam]);
+      } else if (_skipParam && _lvlMap[_levelParam]) {
+        this.scene.start(_lvlMap[_levelParam]);
       } else {
         this.scene.start('MonkIntroScene');
       }
@@ -10304,10 +10309,36 @@ class HeartHammer {
       this.hammer.add([hammerSprite]);
       this.hammer._sprite = hammerSprite;
     } else {
-      // Placeholder: simple brown rectangle so the level still works
-      const placeholder = scene.add.rectangle(0, 0, 14, 56, 0x6a4a2a, 1);
-      placeholder.setStrokeStyle(2, 0x3a2010, 1);
-      this.hammer.add([placeholder]);
+      // Real hammer: heavy stone head + worn oak handle + heart rune
+      const gfx = scene.add.graphics();
+      // Handle — aged oak, tapering grip
+      gfx.fillStyle(0x6b3d1e, 1);
+      gfx.fillRoundedRect(-5, -2, 10, 50, 2);
+      // Handle grain
+      gfx.lineStyle(1, 0x3a1f0a, 0.35);
+      gfx.lineBetween(-3, 8, -3, 44); gfx.lineBetween(1, 6, 1, 46);
+      // Wrap tape at grip
+      gfx.fillStyle(0x4a2810, 0.55);
+      gfx.fillRect(-5, 30, 10, 5); gfx.fillRect(-5, 40, 10, 5);
+      // Collar — dark metal ferrule where handle meets head
+      gfx.fillStyle(0x38383e, 1); gfx.fillRect(-9, -6, 18, 7);
+      // Stone/iron head — heavy and wide
+      gfx.fillStyle(0x3a3a4a, 1); gfx.fillRoundedRect(-22, -28, 44, 22, 4);
+      // Head highlight (upper face)
+      gfx.fillStyle(0x5a5a70, 0.75); gfx.fillRoundedRect(-21, -28, 42, 6, 3);
+      // Head shadow (strike face bottom edge)
+      gfx.fillStyle(0x18181e, 0.6); gfx.fillRoundedRect(-21, -10, 42, 4, 2);
+      // Strike-face dent marks
+      gfx.lineStyle(1, 0x58586e, 0.5);
+      gfx.lineBetween(-12, -20, -8, -12); gfx.lineBetween(8, -22, 12, -14);
+      // Heart rune carved into head — glowing pink
+      gfx.fillStyle(0xff6bb0, 0.92);
+      gfx.fillCircle(-4.5, -20, 3.8); gfx.fillCircle(4.5, -20, 3.8);
+      gfx.fillTriangle(-8, -18, 8, -18, 0, -11);
+      // Rune glow halo
+      gfx.fillStyle(0xff84c8, 0.22); gfx.fillCircle(0, -18, 12);
+      this.hammer.add([gfx]);
+      this._hammerGfx = gfx;
     }
 
     this._bobTween = scene.tweens.add({
@@ -13354,7 +13385,7 @@ class Level1Scene extends Phaser.Scene {
     this.egg._x = eggX;
     this.egg._y = eggY;
     this.egg.crackStage = 0;     // 0..TOTAL_SWINGS — visual crack progress
-    this.egg.TOTAL_SWINGS = 4;   // hammer hits required to fully crack
+    this.egg.TOTAL_SWINGS = 3;   // hammer hits required to fully crack
 
     // Pulsing glow
     this.tweens.add({
@@ -13712,44 +13743,32 @@ class Level1Scene extends Phaser.Scene {
    forest light at the bottom to bright above-the-cloud blue at the top.
    At the apex sits a portal labeled "TO LEVEL 3 — ABOVE THE CLOUDS".
    ==================================================================== */
+
 const LEVEL2 = {
   WIDTH: 1600,
-  HEIGHT: 4800,        // tall — this is a vertical climb
+  HEIGHT: 4800,
   GROUND_Y: 4720,
-  CLOUD_LINE_Y: 2000,  // visual transition: above this we're "in the clouds"
-  SKY_TOP_Y: 400,      // above this we're "above the clouds"
+  CLOUD_LINE_Y: 2000,
+  SKY_TOP_Y: 400,
   GOAL_Y: 240,
+  DEATH_Y: 2200, // Y where boss fires kill shot (just below cloud line)
 };
 
 class Level2Scene extends Phaser.Scene {
   constructor() { super({ key: 'Level2Scene' }); }
 
   init(data) {
-    // Receive carryover from Level 1 (or cinematic chain)
     const c = (data && data.carry) ? data.carry : (data || {});
-    this._carry = {
-      coins: c.coins ?? 0,
-      health: c.health ?? null,
-      weapon: c.weapon ?? null,
-    };
+    this._carry = { coins: c.coins ?? 0, health: c.health ?? null, weapon: c.weapon ?? null };
+    this._isRevival = !!(data && data.revival);
   }
 
   create() {
-    // Wrap the entire create() in try/catch so that any Phaser/asset crash
-    // surfaces as a visible error in the sandbox parent frame instead of
-    // silently leaving a blank canvas.
-    try {
-      this._createImpl();
-    } catch (err) {
+    try { this._createImpl(); }
+    catch (err) {
       const msg = err && err.stack ? err.stack : String(err);
       try { console.error('[DBG-L2-CRASH]', msg); } catch (_) {}
-      try {
-        window.parent && window.parent.postMessage(
-          { type: 'SANDBOX_ERROR', scene: 'Level2Scene', message: msg },
-          '*'
-        );
-      } catch (_) {}
-      // Re-throw so Phaser's own logging still fires for browser devtools.
+      try { window.parent && window.parent.postMessage({ type: 'SANDBOX_ERROR', scene: 'Level2Scene', message: msg }, '*'); } catch (_) {}
       throw err;
     }
   }
@@ -13757,78 +13776,48 @@ class Level2Scene extends Phaser.Scene {
   _createImpl() {
     const W = LEVEL2.WIDTH, H = LEVEL2.HEIGHT;
     this.physics.world.setBounds(0, 0, W, H + 200);
-    // Sandbox boot signal — sandbox page watches for this string to clear
-    // its loading overlay when the player jumps straight into Level 2.
-    // Emit with a [DBG-L2] prefix so Sandbox.tsx mirrors it to the parent
-    // console (it only re-emits log lines starting with [DBG- or [DBG]).
     try { console.log('[DBG-L2] [Level2Scene.create] booted', { W, H }); } catch (e) {}
     try { window.SOUND && window.SOUND.startMusic('level2'); } catch(_){}
-    // Stop intro-music (title/menu) and start the in-level bgm
-    {
-      const im = this.game.registry.get('intro-music');
-      if (im && im.isPlaying) im.stop();
-      const bgm = this.game.registry.get('bgm');
-      if (bgm && !bgm.isPlaying) { try { bgm.play(); } catch (e) {} }
-    }
-    // Also post SANDBOX_READY so the React /sandbox page clears its boot
-    // overlay even when ?level=2 skips Level 1 entirely.
-    try {
-      window.parent && window.parent.postMessage({ type: 'SANDBOX_READY' }, '*');
-    } catch (_) { /* cross-origin: ignore */ }
+    { const im = this.game.registry.get('intro-music'); if (im && im.isPlaying) im.stop(); }
+    try { window.parent && window.parent.postMessage({ type: 'SANDBOX_READY' }, '*'); } catch (_) {}
 
-    // --- End-of-level bridge ---
+    this._deathFired = false;
+    this._revived    = false;
+    this._bossPeeks  = 0;
+    this._lightningBolts = [];   // active lightning projectiles
+    this._movingPlatforms = [];  // oscillating platforms for swing challenge
+
+    // --- End-of-level ---
     const goNext = () => {
       if (this._endingL2) return;
       this._endingL2 = true;
       try { window.CMFA && window.CMFA.restoreColor(this, 'Level2Scene'); } catch (e) {}
-      const cinemKey = 'Level3OpeningScene';
       const nextKey = 'Level3OpeningScene';
       try { const p = JSON.parse(localStorage.getItem('cmfa_progress') || '{}'); p.highest = Math.max(p.highest || 1, 3); localStorage.setItem('cmfa_progress', JSON.stringify(p)); } catch(_){}
-      try { console.log('[Level2Scene] advancing to', nextKey); } catch (e) {}
+      const carry = { coins: (this._carry && this._carry.coins) || this.coinCount || 0, health: this.player ? this.player.health : 100, weapon: 'default' };
       this.cameras.main.fadeOut(1200, 0, 0, 0);
-      const carry = {
-        coins: (this._carry && this._carry.coins) || this.coinCount || 0,
-        health: this.player ? this.player.health : (this._carry && this._carry.health) || 100,
-        weapon: this.player ? (this.player.weapon || this.player.currentWeapon || 'default') : 'default',
-      };
-      this.cameras.main.once('camerafadeoutcomplete', () =>
-        this.scene.start(nextKey, { next: cinemKey, carry })
-      );
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(nextKey, { next: nextKey, carry }));
     };
     this.events.on('level2complete', goNext);
-    if (window.GHIBLI_MODE) {
-      this.input.keyboard.on('keydown-N', goNext);
-    }
+    if (window.GHIBLI_MODE) this.input.keyboard.on('keydown-N', goNext);
 
-    // --- Vertical sky gradient: forest green-teal at bottom → cloud white midway → bright blue at top ---
     this._paintSky(W, H);
-
-    // --- Parallax cloud layers (read as ascending into the sky) ---
     this._paintParallaxClouds(W, H);
 
-    // --- Ground floor at bottom ---
+    // --- Ground ---
     this.platforms = this.physics.add.staticGroup();
-    this.cloudPlatforms = this.physics.add.staticGroup(); // semi-solid (jump up through)
+    this.cloudPlatforms = this.physics.add.staticGroup();
     const ground = this.add.rectangle(W / 2, LEVEL2.GROUND_Y + 40, W, 80, 0x2d4a2a, 1).setDepth(2);
     this.physics.add.existing(ground, true);
     this.platforms.add(ground);
-    // grass strip
     this.add.rectangle(W / 2, LEVEL2.GROUND_Y, W, 6, 0x4caf50, 1).setDepth(2);
 
-    // --- Build ascending staircase ---
-    // Pattern: zig-zag left/right climb. Below cloud line = stone, above = clouds.
-    // Spacing tuned so each platform is reachable with double-jump.
     this._buildStaircase();
 
     // --- Player ---
     const startX = 140, startY = LEVEL2.GROUND_Y - 80;
     this.player = new Player(this, startX, startY);
     this.physics.add.collider(this.player.sprite, this.platforms);
-    // Cloud platforms = one-way: pass through from below (jumping up), land from above.
-    // We disable the collision ONLY when the player is moving upward AND their body
-    // is still below the platform's top edge (i.e. punching through from underneath).
-    // In all other cases (resting, walking, falling), the collision is active so the
-    // player cannot fall through the floor by holding DOWN or by physics jitter.
     this.physics.add.collider(this.player.sprite, this.cloudPlatforms, null, (playerSprite, plat) => {
       const body = playerSprite.body;
       const prevBottom = body._lastBottom ?? (body.prev.y + body.height);
@@ -13836,7 +13825,6 @@ class Level2Scene extends Phaser.Scene {
       const platTop = plat.body.top;
       const platLeft = plat.body.left;
       const platRight = plat.body.right;
-      // FIX (fall-through): same generous slop + recent-on-top memory as L1.
       const SLOP = 32;
       const fallingOrResting = body.velocity.y >= -12;
       const comingFromAbove = prevBottom <= platTop + SLOP;
@@ -13848,148 +13836,117 @@ class Level2Scene extends Phaser.Scene {
       const wasRecentlyOnTop = body._recentTops.get(plat) > now - 200;
       const horizontallyOverPlat = body.right > platLeft + 2 && body.left < platRight - 2;
       const allow = fallingOrResting && (comingFromAbove || alreadySettledOnTop || (wasRecentlyOnTop && horizontallyOverPlat));
-      if (allow && horizontallyOverPlat && Math.abs(currBottom - platTop) <= SLOP + 20) {
-        body._recentTops.set(plat, now);
-      }
+      if (allow && horizontallyOverPlat && Math.abs(currBottom - platTop) <= SLOP + 20) body._recentTops.set(plat, now);
       return allow;
     });
 
-    // --- Interactive platforms (Platforms module) ---
-    // Sprinkled along the vertical climb so players encounter unique
-    // mechanics (mushroom boost, sinking drips, swaying ammonites,
-    // teleporting stone-cloud pair) on the way up.
     try {
       const W2 = LEVEL2.WIDTH, gy = LEVEL2.GROUND_Y;
-      const cloudA = Platforms.spawn(this, 'lvl2_stonecloud_l',  W2 * 0.25, gy - 1600);
-      const cloudB = Platforms.spawn(this, 'lvl2_stonecloud_l',  W2 * 0.78, gy - 2300);
-      cloudA.setData('pair', cloudB);
-      cloudB.setData('pair', cloudA);
+      const cloudA = Platforms.spawn(this, 'lvl2_stonecloud_l', W2 * 0.25, gy - 1600);
+      const cloudB = Platforms.spawn(this, 'lvl2_stonecloud_l', W2 * 0.78, gy - 2300);
+      cloudA.setData('pair', cloudB); cloudB.setData('pair', cloudA);
       this.interactivePlatforms = [cloudA, cloudB];
     } catch (e) { console.warn('[Level2] interactive platform spawn failed', e); }
 
-    // Level 2 starts the player with the new BloomHeartGun (huge heart that
-    // splits into 20 spray bullets on the second SHOOT press). The base
-    // HeartGun is still in the arsenal so TAB/Q can cycle back to it.
     this.arsenal = new Arsenal(this);
     this.bloomHeartGun = new BloomHeartGun(this);
     this.arsenal.addWeapon(this.bloomHeartGun);
-    // Equip the bloom gun by default at level start.
     this.arsenal.currentIndex = this.arsenal.weapons.indexOf(this.bloomHeartGun);
-    this.basicGun = this.arsenal.heartGun; // backward compat for any leftover refs
+    this.basicGun = this.arsenal.heartGun;
     this.player.weapon = this.arsenal.getCurrentWeapon();
-
-    // TAB / Q to cycle weapons (parity with Level 1).
-    this.input.keyboard.on('keydown-TAB', (e) => {
-      e.preventDefault();
-      this.arsenal.cycleWeapon();
-      this.player.weapon = this.arsenal.getCurrentWeapon();
-    });
-    this.input.keyboard.on('keydown-Q', () => {
-      this.arsenal.cycleWeapon();
-      this.player.weapon = this.arsenal.getCurrentWeapon();
-    });
+    this.input.keyboard.on('keydown-TAB', (e) => { e.preventDefault(); this.arsenal.cycleWeapon(); this.player.weapon = this.arsenal.getCurrentWeapon(); });
+    this.input.keyboard.on('keydown-Q', () => { this.arsenal.cycleWeapon(); this.player.weapon = this.arsenal.getCurrentWeapon(); });
 
     if (!this.scene.isActive('HUDScene')) this.scene.launch('HUDScene');
     this.events.emit('coinCollected', 0);
 
-    // --- Camera: tall vertical follow ---
     this.cameras.main.startFollow(this.player.sprite, true, 0.08, 0.12);
     this.cameras.main.setBounds(0, 0, W, H);
-    // Camera lead-in: hold horizontal scroll until the player passes the
-    // screen midpoint, then track them. Vertical follow remains unaffected.
-    {
-      const _camW = this.cameras.main.width / this.cameras.main.zoom;
-      this.cameras.main.setFollowOffset(-_camW / 2, 0);
-      this.cameras.main.setDeadzone(_camW, 1);
-    }
-    // Match Level 1 zoom — camera pulled in closer to the character.
+    { const _camW = this.cameras.main.width / this.cameras.main.zoom; this.cameras.main.setFollowOffset(-_camW / 2, 0); this.cameras.main.setDeadzone(_camW, 1); }
     this.cameras.main.setZoom(1.28);
-    // Snap the camera onto the player IMMEDIATELY. Without this, the smooth
-    // follow lerp (0.08) starts at scrollY=0 and slowly catches up over
-    // ~30+ frames — during which the sandbox screenshot looks "blank/black"
-    // because the camera is showing world rows 0..720 while the player is
-    // already near y=4640. Centering on frame 1 avoids that confusing gap.
-    try {
-      this.cameras.main.centerOn(this.player.sprite.x, this.player.sprite.y);
-      const c = this.cameras.main;
-      console.log('[DBG-L2] camera centered', {
-        sx: c.scrollX, sy: c.scrollY,
-        cw: c.width, ch: c.height,
-        px: this.player.sprite.x, py: this.player.sprite.y,
-        canvasW: this.scale.canvas.width, canvasH: this.scale.canvas.height,
-      });
-    } catch (e) { console.warn('[DBG-L2] centerOn failed', e); }
+    try { this.cameras.main.centerOn(this.player.sprite.x, this.player.sprite.y); } catch (e) {}
 
-    // --- Input ---
-    // Keep input bindings IDENTICAL to Level1Scene so controls don't change
-    // between levels: Arrows/WASD = move, SPACE = jump, Z = shoot, X = backstep,
-    // SHIFT = sprint, Q = special.
     this.cursors = this.input.keyboard.addKeys({
-      left:     Phaser.Input.Keyboard.KeyCodes.LEFT,
-      right:    Phaser.Input.Keyboard.KeyCodes.RIGHT,
-      up:       Phaser.Input.Keyboard.KeyCodes.SPACE,
-      down:     Phaser.Input.Keyboard.KeyCodes.DOWN,
-      // Metal Slug-style dedicated AIM-UP key (separate from jump).
-      aimUp:    Phaser.Input.Keyboard.KeyCodes.UP,
-      shift:    Phaser.Input.Keyboard.KeyCodes.SHIFT,
-      backstep: Phaser.Input.Keyboard.KeyCodes.X,
-      shoot:    Phaser.Input.Keyboard.KeyCodes.Z,
+      left: Phaser.Input.Keyboard.KeyCodes.LEFT, right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+      up: Phaser.Input.Keyboard.KeyCodes.SPACE, down: Phaser.Input.Keyboard.KeyCodes.DOWN,
+      aimUp: Phaser.Input.Keyboard.KeyCodes.UP, shift: Phaser.Input.Keyboard.KeyCodes.SHIFT,
+      backstep: Phaser.Input.Keyboard.KeyCodes.X, shoot: Phaser.Input.Keyboard.KeyCodes.Z,
     });
     this.cursors.special = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
-    this.wasd = this.input.keyboard.addKeys({
-      left:  Phaser.Input.Keyboard.KeyCodes.A,
-      right: Phaser.Input.Keyboard.KeyCodes.D,
-      up:    Phaser.Input.Keyboard.KeyCodes.W,
-      down:  Phaser.Input.Keyboard.KeyCodes.S,
-    });
+    this.wasd = this.input.keyboard.addKeys({ left: Phaser.Input.Keyboard.KeyCodes.A, right: Phaser.Input.Keyboard.KeyCodes.D, up: Phaser.Input.Keyboard.KeyCodes.W, down: Phaser.Input.Keyboard.KeyCodes.S });
     this.touchControls = new TouchControls(this);
-
-    // Track mouse for 360° aim
     this._lastMouseMove = 0;
-    this.input.on('pointermove', (p) => {
-      if (p.pointerType !== 'touch') this._lastMouseMove = this.time.now;
-    });
+    this.input.on('pointermove', (p) => { if (p.pointerType !== 'touch') this._lastMouseMove = this.time.now; });
 
     this.shadowClouds = [];
     this.spangerells = [];
+    this._chasers = [];   // clouds that actively chase player from below
 
-    // --- Enemies on platforms (more dense as you climb) ---
     this._spawnAscentEnemies();
-
-    // --- Goal portal at the top ---
+    this._buildMovingPlatforms();
     this._spawnGoalPortal();
 
-    // --- HUD toasts: "ALTITUDE" indicator that updates as you climb ---
+    // X key = PARRY / REFLECT in Level2 (not backstep)
+    this._parryKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.X);
+    this._parryActive = false;
+    this._parryCooldown = 0;
+    this._parryFlash = null;
+    this.input.keyboard.on('keydown-X', () => this._doParry());
+
+    // Left-click fires grapple hook
+    this.input.on('pointerdown', (ptr) => {
+      if (ptr.leftButtonDown && this.scene.isActive('Level2Scene') && !this._gamePaused) {
+        if (window.CMFA && this._cmfaGrapple) {
+          this._cmfaGrapple._shootToward(ptr.worldX, ptr.worldY);
+        }
+      }
+    });
+
+    // Darkness overlay — fades in as player climbs above cloud line
+    this._darknessOverlay = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0).setDepth(8).setScrollFactor(0);
+
+    // Candle glow sprites at altitude checkpoints
+    this._spawnCandleBeacons();
+
     const cam = this.cameras.main;
     this._altitudeText = this.add.text(cam.width - 12, 12, 'ALT 0m', {
-      fontSize: '14px', fontFamily: 'Georgia, serif', color: '#ffffff',
-      stroke: '#000', strokeThickness: 3,
+      fontSize: '14px', fontFamily: 'Georgia, serif', color: '#ffffff', stroke: '#000', strokeThickness: 3,
     }).setOrigin(1, 0).setScrollFactor(0).setDepth(950);
 
     this._floatToast = (msg, color = '#ffd84f') => {
       const c = this.cameras.main;
       const t = this.add.text(c.width / 2, 100, msg, {
-        fontSize: '18px', fontFamily: 'Georgia, serif', color,
-        stroke: '#000', strokeThickness: 4,
+        fontSize: '18px', fontFamily: 'Georgia, serif', color, stroke: '#000', strokeThickness: 4,
       }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
       this.tweens.add({ targets: t, y: 80, alpha: 0, duration: 1400, onComplete: () => t.destroy() });
     };
-    this._floatToast('THE ASCENT — climb to reach Level 3, above the clouds', '#cfeaff');
+    this._floatToast('THE ASCENT — climb above the storm clouds', '#cfeaff');
 
     this.controlsHint = this.add.text(cam.width / 2, cam.height - 24,
-      'A/D move · SPACE jump (double-jump available) · cloud platforms are one-way', {
-        fontSize: '12px', fontFamily: 'sans-serif', color: '#fff099',
-        stroke: '#000', strokeThickness: 3,
+      'A/D move · SPACE jump · Z shoot · X parry lightning · click/G grapple', {
+        fontSize: '12px', fontFamily: 'sans-serif', color: '#fff099', stroke: '#000', strokeThickness: 3,
       }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
+    this.time.delayedCall(5000, () => { if (this.controlsHint) this.controlsHint.destroy(); });
 
     this.colorSaturation = new ColorSaturation(this);
 
-    // ===== CMFA mechanics: grapple + rainbow ladder + 3 light shards =====
+    // Death handler — once only
+    this.events.on('playerDied', () => {
+      if (this._revived || this._deathHandled) return;
+      this._deathHandled = true;
+      this._triggerDeathAndRevival();
+    });
+
+    // Coin collection
+    this.coinCount = 0;
+    this.coins = this.physics.add.staticGroup();
+
+    // Boss peek sequence — starts when player approaches cloud line
+    this._bossGfx = this.add.graphics().setDepth(50);
+
     try {
-      // Use cloudPlatforms if present so grapple anchors to clouds too
-      const platGroup = this.cloudPlatforms || this.platforms;
       window.CMFA && window.CMFA.install(this, {
-        platforms: platGroup,
+        platforms: this.cloudPlatforms || this.platforms,
         ladder: { x: LEVEL2.WIDTH * 0.5, yTop: LEVEL2.CLOUD_LINE_Y - 600, height: 600 },
         shards: [
           { x: LEVEL2.WIDTH * 0.3, y: LEVEL2.GROUND_Y - 800 },
@@ -13999,165 +13956,660 @@ class Level2Scene extends Phaser.Scene {
         eclipseTime: 75000,
       });
     } catch (e) { console.warn('[CMFA L2 install]', e); }
+
+    // Grab reference to CMFA grapple for click-to-fire
+    try { this._cmfaGrapple = this._cmfa && this._cmfa.grapple; } catch (_) {}
+
+    // Revival animation when coming back from CinematicD
+    if (this._isRevival) {
+      this._revived = true;
+      if (this.player) {
+        this.player.isDead = false;
+        this.player.health = this.player.maxHealth || 3;
+        this.player.sprite.setPosition(LEVEL2.WIDTH * 0.35, LEVEL2.CLOUD_LINE_Y + 300);
+        this.player.sprite.setAlpha(0);
+        this.cameras.main.fadeIn(800, 0, 0, 0);
+        this.tweens.add({ targets: this.player.sprite, alpha: 1, duration: 600 });
+        this.time.delayedCall(300, () => {
+          this._floatToast('Luna lives — climb on, alone now.', '#ff84c8');
+          // Rising glow ring from player position
+          const rg = this.add.graphics().setDepth(200);
+          let ringR = 10;
+          const ringTimer = this.time.addEvent({ delay: 16, repeat: 40, callback: () => {
+            rg.clear();
+            rg.lineStyle(3, 0xff84c8, 0.9 - ringR / 80);
+            rg.strokeCircle(this.player.sprite.x, this.player.sprite.y, ringR);
+            ringR += 2;
+          }, callbackScope: this });
+          this.time.delayedCall(700, () => rg.destroy());
+        });
+        this.events.emit('playerHealed', this.player.health, this.player.maxHealth);
+      }
+    }
   }
 
-  /* ----- Sky paint: vertical gradient from forest floor → cloud bank → bright above-clouds blue ----- */
+  // ── SKY ──────────────────────────────────────────────────────────────────
   _paintSky(W, H) {
     const sky = this.add.graphics().setDepth(0).setScrollFactor(0, 1);
-    // Bottom band: forest dusk
     sky.fillGradientStyle(0x4a7a5a, 0x4a7a5a, 0x6a9b8a, 0x6a9b8a, 1);
     sky.fillRect(0, LEVEL2.CLOUD_LINE_Y + 400, W, H - (LEVEL2.CLOUD_LINE_Y + 400));
-    // Middle band: misty cloud zone
     sky.fillGradientStyle(0x9ab8c8, 0x9ab8c8, 0xe8eef4, 0xe8eef4, 1);
     sky.fillRect(0, LEVEL2.CLOUD_LINE_Y - 400, W, 800);
-    // Connect bottom→cloud band
     sky.fillGradientStyle(0x6a9b8a, 0x6a9b8a, 0x9ab8c8, 0x9ab8c8, 1);
     sky.fillRect(0, LEVEL2.CLOUD_LINE_Y, W, 400);
-    // Top band: bright above-cloud sky
-    sky.fillGradientStyle(0x6fb6ff, 0x6fb6ff, 0xc8e6ff, 0xc8e6ff, 1);
+    // Dark zone above cloud line — deepens toward storm
+    sky.fillGradientStyle(0x0d0b18, 0x0d0b18, 0x1a1640, 0x1a1640, 1);
     sky.fillRect(0, 0, W, LEVEL2.CLOUD_LINE_Y - 400);
-
-    // Sun glow at the very top — the destination
-    const sunGlow = this.add.circle(W / 2, LEVEL2.SKY_TOP_Y, 200, 0xfff3b0, 0.35).setDepth(0);
-    this.tweens.add({ targets: sunGlow, scaleX: 1.15, scaleY: 1.15, alpha: 0.5,
-      duration: 2200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    const sun = this.add.circle(W / 2, LEVEL2.SKY_TOP_Y, 80, 0xfff8d8, 0.95).setDepth(0);
+    // Faint stars at the very top
+    const starG = this.add.graphics().setDepth(0).setScrollFactor(0, 0.2);
+    for (let i = 0; i < 60; i++) {
+      const sx = Phaser.Math.Between(0, W), sy = Phaser.Math.Between(0, LEVEL2.SKY_TOP_Y + 200);
+      starG.fillStyle(0xffffff, 0.3 + Math.random() * 0.5);
+      starG.fillCircle(sx, sy, 1 + Math.random());
+    }
   }
 
-  /* ----- Painted parallax clouds: lots near the cloud line, sparser above and below ----- */
   _paintParallaxClouds(W, H) {
     const drawCloud = (g, x, y, r, alpha) => {
       g.fillStyle(0xffffff, alpha);
-      g.fillCircle(x - r * 0.6, y, r * 0.7);
-      g.fillCircle(x, y - r * 0.2, r);
-      g.fillCircle(x + r * 0.7, y, r * 0.75);
-      g.fillCircle(x + r * 0.3, y + r * 0.3, r * 0.6);
+      g.fillCircle(x - r * 0.6, y, r * 0.7); g.fillCircle(x, y - r * 0.2, r);
+      g.fillCircle(x + r * 0.7, y, r * 0.75); g.fillCircle(x + r * 0.3, y + r * 0.3, r * 0.6);
     };
-    // Far layer (slow scroll)
     const farG = this.add.graphics().setDepth(0.5);
-    for (let i = 0; i < 24; i++) {
-      const cy = LEVEL2.CLOUD_LINE_Y + Phaser.Math.Between(-900, 900);
-      const cx = Phaser.Math.Between(0, W);
-      drawCloud(farG, cx, cy, Phaser.Math.Between(40, 80), 0.55);
-    }
-    // Mid layer dense around cloud line
+    for (let i = 0; i < 24; i++) drawCloud(farG, Phaser.Math.Between(0, W), LEVEL2.CLOUD_LINE_Y + Phaser.Math.Between(-900, 900), Phaser.Math.Between(40, 80), 0.55);
     const midG = this.add.graphics().setDepth(1);
-    for (let i = 0; i < 18; i++) {
-      const cy = LEVEL2.CLOUD_LINE_Y + Phaser.Math.Between(-300, 300);
-      const cx = Phaser.Math.Between(-50, W + 50);
-      drawCloud(midG, cx, cy, Phaser.Math.Between(60, 110), 0.85);
-    }
-    // Above-cloud wisps (just a few near the top)
+    for (let i = 0; i < 18; i++) drawCloud(midG, Phaser.Math.Between(-50, W + 50), LEVEL2.CLOUD_LINE_Y + Phaser.Math.Between(-300, 300), Phaser.Math.Between(60, 110), 0.85);
     const topG = this.add.graphics().setDepth(0.7);
-    for (let i = 0; i < 6; i++) {
-      const cy = Phaser.Math.Between(LEVEL2.SKY_TOP_Y + 100, LEVEL2.CLOUD_LINE_Y - 600);
-      const cx = Phaser.Math.Between(0, W);
-      drawCloud(topG, cx, cy, Phaser.Math.Between(35, 60), 0.5);
-    }
+    for (let i = 0; i < 6; i++) drawCloud(topG, Phaser.Math.Between(0, W), Phaser.Math.Between(LEVEL2.SKY_TOP_Y + 100, LEVEL2.CLOUD_LINE_Y - 600), Phaser.Math.Between(35, 60), 0.25);
   }
 
-  /* ----- Build the ascending staircase of platforms ----- */
+  // ── STAIRCASE ──────────────────────────────────────────────────────────────
   _buildStaircase() {
-    // Each step rises ~140-170px (within double-jump range) and zig-zags horizontally.
-    // Below CLOUD_LINE_Y = solid stone. Above = cloud (semi-solid).
     const steps = [];
-    let y = LEVEL2.GROUND_Y - 160;
-    let side = 1; // 1 = right, -1 = left
-    let zigX = LEVEL2.WIDTH / 2;
-    const stepRise = 150;
-    const stepSpread = 360;
-
+    let y = LEVEL2.GROUND_Y - 160, side = 1, zigX = LEVEL2.WIDTH / 2;
+    const stepRise = 150, stepSpread = 360;
     while (y > LEVEL2.GOAL_Y + 120) {
       zigX += side * stepSpread;
-      // bounce off walls
       if (zigX > LEVEL2.WIDTH - 200) { zigX = LEVEL2.WIDTH - 200; side = -1; }
       if (zigX < 200)                 { zigX = 200;                 side =  1; }
       const isCloud = y < LEVEL2.CLOUD_LINE_Y;
       steps.push({ x: zigX, y, isCloud });
-      // Occasionally add a small midpoint platform to ease the climb in the cloud zone
-      if (isCloud && Math.random() < 0.45) {
-        const midX = zigX - side * (stepSpread / 2);
-        steps.push({ x: midX, y: y - stepRise / 2, isCloud: true, small: true });
-      }
-      y -= stepRise;
-      side *= -1;
+      if (isCloud && Math.random() < 0.45) steps.push({ x: zigX - side * (stepSpread / 2), y: y - stepRise / 2, isCloud: true, small: true });
+      y -= stepRise; side *= -1;
     }
-    // Final approach platform directly under the goal
     steps.push({ x: LEVEL2.WIDTH / 2, y: LEVEL2.GOAL_Y + 100, isCloud: true, big: true });
-
     this.steps = steps;
     const L2_CYCLE = ['lvl2_mushroom', 'lvl2_drip', 'lvl2_ammonite', 'lvl2_stonecloud_s'];
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
       const w = s.big ? 280 : (s.small ? 90 : 140);
-      // Pick a sprite from the L2 cycle. Cloud-zone steps land in cloudPlatforms
-      // (one-way collider above), stone-zone steps land in this.platforms.
-      const type = L2_CYCLE[i % L2_CYCLE.length];
-      const groupForStep = s.isCloud ? this.cloudPlatforms : this.platforms;
-      Platforms.spawn(this, type, s.x, s.y, {
-        group: groupForStep,
-        size: [w, 22],
-      });
+      Platforms.spawn(this, L2_CYCLE[i % L2_CYCLE.length], s.x, s.y, { group: s.isCloud ? this.cloudPlatforms : this.platforms, size: [w, 22] });
     }
   }
 
+  // ── MOVING PLATFORMS (swing challenge zone) ────────────────────────────────
+  _buildMovingPlatforms() {
+    // 6 oscillating platforms in the upper third — require grapple swing to reach
+    const W = LEVEL2.WIDTH;
+    const configs = [
+      { x: W * 0.25, y: LEVEL2.CLOUD_LINE_Y - 600,  rangeX: 280, speed: 2200, w: 110 },
+      { x: W * 0.75, y: LEVEL2.CLOUD_LINE_Y - 900,  rangeX: 240, speed: 1800, w: 100 },
+      { x: W * 0.4,  y: LEVEL2.CLOUD_LINE_Y - 1200, rangeX: 320, speed: 1600, w: 90  },
+      { x: W * 0.6,  y: LEVEL2.CLOUD_LINE_Y - 1500, rangeX: 200, speed: 1400, w: 90  },
+      { x: W * 0.3,  y: LEVEL2.SKY_TOP_Y + 500,     rangeX: 260, speed: 1200, w: 80  },
+      { x: W * 0.7,  y: LEVEL2.SKY_TOP_Y + 300,     rangeX: 220, speed: 1100, w: 80  },
+    ];
+    for (const cfg of configs) {
+      // Create a visible rectangle
+      const rect = this.add.rectangle(cfg.x, cfg.y, cfg.w, 18, 0x8a6a4a, 1).setDepth(3);
+      // Add a thin highlight stripe
+      const stripe = this.add.rectangle(cfg.x, cfg.y - 6, cfg.w - 4, 4, 0xc49a6c, 1).setDepth(3);
+      // Static physics body — we refresh it manually each frame
+      this.physics.add.existing(rect, true);
+      // Collider with player
+      this.physics.add.collider(this.player.sprite, rect, null, (playerSprite, plat) => {
+        const body = playerSprite.body;
+        const fallingOrResting = body.velocity.y >= -12;
+        const comingFromAbove = (body.y + body.height) <= plat.body.top + 28;
+        return fallingOrResting && comingFromAbove;
+      });
+      // Tween the rect horizontally, stripe follows
+      this.tweens.add({
+        targets: [rect, stripe],
+        x: cfg.x + cfg.rangeX,
+        duration: cfg.speed,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+      this._movingPlatforms.push(rect);
+    }
+  }
+
+  // ── ENEMIES ────────────────────────────────────────────────────────────────
   _spawnAscentEnemies() {
     if (!this.steps) return;
-    // Skip the first few low platforms (give the player time to settle)
     for (let i = 4; i < this.steps.length - 2; i++) {
       const s = this.steps[i];
       if (s.small || s.big) continue;
-      // Density increases with altitude (toward the top of the climb)
       const altFrac = 1 - ((s.y - LEVEL2.GOAL_Y) / (LEVEL2.GROUND_Y - LEVEL2.GOAL_Y));
-      const chance = 0.25 + altFrac * 0.5;
-      if (Math.random() < chance) {
+      // Enemies only below cloud line at start; above cloud line enemies are chasers
+      if (s.y > LEVEL2.CLOUD_LINE_Y && Math.random() < 0.25 + altFrac * 0.4) {
         const cloud = new ShadowCloud(this, s.x, s.y - 70, false);
         this.shadowClouds.push(cloud);
       }
     }
+    // Chase clouds — spawn just below cloud line, drift upward toward player
+    for (let i = 0; i < 4; i++) {
+      const cx = Phaser.Math.Between(100, LEVEL2.WIDTH - 100);
+      const cy = LEVEL2.CLOUD_LINE_Y + Phaser.Math.Between(200, 600);
+      const chaser = new ShadowCloud(this, cx, cy, false);
+      chaser._isChaser = true;
+      this.shadowClouds.push(chaser);
+      this._chasers.push(chaser);
+    }
   }
 
-  /* ----- Goal portal at the top: shimmering doorway labeled TO LEVEL 3 ----- */
-  _spawnGoalPortal() {
-    const gx = LEVEL2.WIDTH / 2;
-    const gy = LEVEL2.GOAL_Y;
+  // ── CANDLE BEACONS ─────────────────────────────────────────────────────────
+  _spawnCandleBeacons() {
+    const candles = [
+      { y: LEVEL2.CLOUD_LINE_Y - 300 },
+      { y: LEVEL2.CLOUD_LINE_Y - 900 },
+      { y: LEVEL2.SKY_TOP_Y + 500 },
+    ];
+    candles.forEach(({ y }) => {
+      const x = Phaser.Math.Between(80, LEVEL2.WIDTH - 80);
+      const g = this.add.graphics().setDepth(6);
+      // Candle body
+      g.fillStyle(0xf5e6c8, 1); g.fillRect(x - 4, y - 20, 8, 20);
+      g.fillStyle(0x3a2a1a, 1); g.fillRect(x - 5, y, 10, 6);
+      // Flame
+      const flame = this.add.graphics().setDepth(7);
+      flame.fillStyle(0xffcc44, 0.9); flame.fillEllipse(x, y - 26, 8, 12);
+      flame.fillStyle(0xff8800, 0.6); flame.fillEllipse(x, y - 28, 5, 8);
+      this.tweens.add({ targets: flame, scaleX: 1.2, scaleY: 0.85, alpha: 0.7, duration: 220 + Math.random() * 120, yoyo: true, repeat: -1 });
+      // Glow halo
+      const halo = this.add.circle(x, y - 26, 40, 0xffcc44, 0.12).setDepth(6);
+      this.tweens.add({ targets: halo, alpha: 0.22, scaleX: 1.3, scaleY: 1.3, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    });
+  }
 
-    // Pedestal cloud
+  // ── DRAW BOSS (transparent color-draining entity) ─────────────────────────
+  _drawBoss(bossG, bx, peekY, alpha, drainT) {
+    bossG.clear();
+    if (alpha <= 0) return;
+    const t = drainT || 0;
+    // Ghostly translucent body — faint white with colored drain aura
+    bossG.fillStyle(0xffffff, alpha * 0.28);
+    bossG.fillCircle(bx, peekY - 50, 28); // head
+    bossG.fillStyle(0xffffff, alpha * 0.22);
+    bossG.fillRect(bx - 15, peekY - 22, 30, 45); // torso
+    bossG.fillRect(bx - 26, peekY - 16, 13, 34); // L arm
+    bossG.fillRect(bx + 13, peekY - 16, 13, 34); // R arm
+    bossG.fillRect(bx - 12, peekY + 23, 10, 36); // L leg
+    bossG.fillRect(bx + 2,  peekY + 23, 10, 36); // R leg
+    // Draining color tendrils radiating downward (color-drain effect)
+    const drainCols = [0xff4060, 0xffd84f, 0x4fd97a, 0x4fb8ff, 0x9b6fff];
+    for (let i = 0; i < 5; i++) {
+      const ang = (i / 5) * Math.PI + Math.PI * 0.1 + t * 0.4;
+      const dx = Math.cos(ang) * (70 + Math.sin(t * 1.2 + i) * 20);
+      const dy = Math.sin(ang) * (70 + Math.cos(t * 0.9 + i) * 15);
+      bossG.lineStyle(2, drainCols[i], alpha * 0.55);
+      bossG.beginPath(); bossG.moveTo(bx, peekY); bossG.lineTo(bx + dx, peekY + Math.abs(dy) + 20); bossG.strokePath();
+      bossG.fillStyle(drainCols[i], alpha * 0.35);
+      bossG.fillCircle(bx + dx, peekY + Math.abs(dy) + 20, 5 + Math.sin(t + i) * 2);
+    }
+    // Glowing hollow eyes — eerie color-draining stare
+    bossG.lineStyle(2, 0xffd84f, alpha * 0.9);
+    bossG.strokeCircle(bx - 9, peekY - 53, 5);
+    bossG.strokeCircle(bx + 9, peekY - 53, 5);
+    bossG.fillStyle(0xffd84f, alpha * 0.6);
+    bossG.fillCircle(bx - 9, peekY - 53, 2.5);
+    bossG.fillCircle(bx + 9, peekY - 53, 2.5);
+    // Outer aura — ghostly pulse ring
+    bossG.lineStyle(2, 0xffffff, alpha * 0.18);
+    bossG.strokeCircle(bx, peekY - 20, 65);
+    bossG.lineStyle(1, 0x4fb8ff, alpha * 0.22);
+    bossG.strokeCircle(bx, peekY - 20, 80 + Math.sin(t * 1.5) * 8);
+  }
+
+  // ── BOSS PEEK (called from update when player nears cloud line) ────────────
+  _triggerBossPeek() {
+    if (this._bossPeeking || this._deathFired) return;
+    this._bossPeeking = true;
+    this._bossPeeks++;
+    const W = LEVEL2.WIDTH, cam = this.cameras.main;
+    const bossG = this._bossGfx;
+    const bx = W * 0.5 + cam.scrollX;
+    const peekY = LEVEL2.CLOUD_LINE_Y - 80;
+    let drainT = 0;
+
+    const drawBoss = (alpha) => {
+      drainT += 0.05;
+      this._drawBoss(bossG, bx, peekY, alpha, drainT);
+    };
+
+    // Flicker in, hold, flicker out
+    let a = 0;
+    const flashIn = this.tweens.addCounter({ from: 0, to: 1, duration: 400,
+      onUpdate: (tw) => { a = tw.getValue(); drawBoss(a); },
+      onComplete: () => {
+        // Boss taunts
+        const taunts = [
+          "You dare climb this high?",
+          "Turn back. You are not ready.",
+          "…I remember you.",
+        ];
+        this._showBossDialogue(taunts[this._bossPeeks - 1] || "I've been waiting…");
+        this.time.delayedCall(1800, () => {
+          this.tweens.addCounter({ from: 1, to: 0, duration: 500,
+            onUpdate: (tw) => drawBoss(tw.getValue()),
+            onComplete: () => {
+              bossG.clear();
+              this._bossPeeking = false;
+              // Third peek = kill shot
+              if (this._bossPeeks >= 3 && !this._deathFired) {
+                this.time.delayedCall(1200, () => this._triggerBossKillShot());
+              }
+            }
+          });
+        });
+      }
+    });
+  }
+
+  _showBossDialogue(text) {
+    const cam = this.cameras.main;
+    const bg = this.add.rectangle(cam.width / 2, cam.height - 60, cam.width - 40, 52, 0x000000, 0.75).setScrollFactor(0).setDepth(200);
+    bg.setStrokeStyle(1.5, 0xffffff, 0.5);
+    const t = this.add.text(cam.width / 2, cam.height - 60, `"${text}"`, {
+      fontFamily: 'Georgia, serif', fontSize: '17px', color: '#ffffff', fontStyle: 'italic',
+      stroke: '#000', strokeThickness: 3, wordWrap: { width: cam.width - 60 }
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(201);
+    this.time.delayedCall(2200, () => { bg.destroy(); t.destroy(); });
+  }
+
+  // ── BOSS KILL SHOT ─────────────────────────────────────────────────────────
+  _triggerBossKillShot() {
+    if (this._deathFired) return;
+    this._deathFired = true;
+    const W = LEVEL2.WIDTH, bossG = this._bossGfx;
+    const bx = W * 0.5 + this.cameras.main.scrollX;
+    const peekY = LEVEL2.CLOUD_LINE_Y - 80;
+    let drainT = 0;
+
+    const drawBoss = (alpha) => { drainT += 0.06; this._drawBoss(bossG, bx, peekY, alpha, drainT); };
+
+    this.tweens.addCounter({ from: 0, to: 1, duration: 300, onUpdate: (tw) => drawBoss(tw.getValue()),
+      onComplete: () => {
+        this._showBossDialogue("Enough.");
+        this.cameras.main.shake(200, 0.01);
+        this.time.delayedCall(600, () => {
+          this._showBossDialogue("You cannot escape the White.");
+          this.cameras.main.shake(120, 0.008);
+          this.time.delayedCall(900, () => {
+            // Beam TRACKS player's current screen X throughout its animation
+            const beamGfx = this.add.graphics().setDepth(60);
+            const warningGfx = this.add.graphics().setDepth(59);
+            // Warning phase: sweeping targeting line follows player for 800ms
+            const warnTimer = this.time.addEvent({ delay: 16, repeat: 50, callback: () => {
+              const px = this.player ? this.player.sprite.x : W / 2;
+              warningGfx.clear();
+              warningGfx.lineStyle(2, 0xff4060, 0.6);
+              warningGfx.lineBetween(px, LEVEL2.SKY_TOP_Y, px, this.player ? this.player.sprite.y : LEVEL2.CLOUD_LINE_Y);
+              warningGfx.fillStyle(0xff4060, 0.3);
+              warningGfx.fillRect(px - 30, LEVEL2.SKY_TOP_Y, 60, (this.player ? this.player.sprite.y : LEVEL2.CLOUD_LINE_Y) - LEVEL2.SKY_TOP_Y);
+            }});
+            this.time.delayedCall(800, () => {
+              warnTimer.remove(); warningGfx.destroy();
+              // Lock onto player's CURRENT position
+              const px = this.player ? this.player.sprite.x : W / 2;
+              this.tweens.addCounter({ from: 0, to: 1, duration: 500,
+                onUpdate: (tw) => {
+                  const a = tw.getValue();
+                  beamGfx.clear();
+                  // Outer glow
+                  beamGfx.fillStyle(0xffffff, a * 0.35);
+                  beamGfx.fillRect(px - 55, LEVEL2.SKY_TOP_Y, 110, LEVEL2.HEIGHT);
+                  // Mid ring
+                  beamGfx.fillStyle(0xff84c8, a * 0.6);
+                  beamGfx.fillRect(px - 28, LEVEL2.SKY_TOP_Y, 56, LEVEL2.HEIGHT);
+                  // Core beam
+                  beamGfx.fillStyle(0xffffff, a * 0.95);
+                  beamGfx.fillRect(px - 12, LEVEL2.SKY_TOP_Y, 24, LEVEL2.HEIGHT);
+                  // Draw boss intensifying above
+                  drainT += 0.1;
+                  this._drawBoss(bossG, bx, peekY, 0.85, drainT);
+                },
+                onComplete: () => {
+                  this.cameras.main.shake(600, 0.04);
+                  this.cameras.main.flash(400, 255, 255, 255);
+                  if (this.player && !this.player.isDead) this.player._die();
+                  beamGfx.destroy(); bossG.clear();
+                }
+              });
+            });
+          });
+        });
+      }
+    });
+  }
+
+  // ── DEATH + VILLAGE CINEMATIC REVIVAL ─────────────────────────────────────
+  _triggerDeathAndRevival() {
+    if (this._revived) return;
+    this._gamePaused = true;
+
+    // Fade to black, then launch the village meditation cinematic
+    this.cameras.main.fadeOut(1200, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      // Bundle current progress so Level2 can restore it on return
+      const carry = {
+        coins: this.coinCount || 0,
+        health: this.player ? this.player.maxHealth : 3,
+        weapon: 'default',
+      };
+      // CinematicDScene will call scene.start(this._next) when done.
+      // We pass Level2Scene as next, with revival:true so it knows to skip intro
+      // and show the rising-animation revival.
+      this.scene.start('CinematicDScene', {
+        next: 'Level2Scene',
+        revival: true,
+        carry,
+      });
+    });
+  }
+
+  _showMonkRevivalScene(onDone) {
+    const W = this.cameras.main.width, H = this.cameras.main.height;
+    // Full black background
+    const bg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 1).setScrollFactor(0).setDepth(300);
+
+    // Use monk-frame1 (the council/villager scene from the opening)
+    const hasFrames = this.textures.exists('monk-frame1');
+    let artImg = null;
+    if (hasFrames) {
+      const tex = this.textures.get('monk-frame1').getSourceImage();
+      const s = Math.max(W / tex.width, H / tex.height);
+      artImg = this.add.image(W / 2, H / 2, 'monk-frame1').setScale(s).setAlpha(0).setScrollFactor(0).setDepth(301);
+      // Dark vignette to keep it dramatic
+      const vig = this.add.graphics().setScrollFactor(0).setDepth(302);
+      vig.fillStyle(0x000000, 0.45);
+      vig.fillRect(0, 0, W, H);
+    } else {
+      // Procedural fallback: dark warm painting of villagers
+      const fallback = this.add.graphics().setScrollFactor(0).setDepth(301);
+      fallback.fillGradientStyle(0x1a0d05, 0x1a0d05, 0x2a1f3a, 0x2a1f3a, 1);
+      fallback.fillRect(0, 0, W, H);
+      // Village silhouettes
+      fallback.fillStyle(0x2a1f3a, 1);
+      fallback.fillRect(0, H - 100, W, 100);
+      for (let i = 0; i < 8; i++) {
+        const hx = 60 + i * (W - 120) / 7;
+        fallback.fillStyle(0x1a0d14, 1);
+        fallback.fillRect(hx - 12, H - 130, 24, 30);
+        fallback.fillTriangle(hx - 16, H - 130, hx + 16, H - 130, hx, H - 155);
+        fallback.fillStyle(0xffd47a, 0.9); fallback.fillRect(hx - 4, H - 120, 8, 6);
+      }
+      artImg = fallback;
+    }
+
+    // Orb / portal where Luna was — glowing receptacle for the meditation energy
+    const orbX = W * 0.48, orbY = H * 0.58;
+    const orbG = this.add.graphics().setScrollFactor(0).setDepth(304);
+    const drawOrb = (t) => {
+      orbG.clear();
+      const pulse = 0.8 + Math.sin(t * 0.004) * 0.18;
+      // Outer aura
+      orbG.fillStyle(0xff84c8, 0.10 * pulse); orbG.fillCircle(orbX, orbY, 70 * pulse);
+      orbG.fillStyle(0xffd4ec, 0.18 * pulse); orbG.fillCircle(orbX, orbY, 50 * pulse);
+      // Core orb
+      orbG.fillStyle(0xffffff, 0.88); orbG.fillCircle(orbX, orbY, 22 * pulse);
+      orbG.fillStyle(0xff84c8, 0.6);  orbG.fillCircle(orbX, orbY, 14 * pulse);
+      // Rim
+      orbG.lineStyle(2, 0xffffff, 0.6 * pulse); orbG.strokeCircle(orbX, orbY, 24 * pulse);
+    };
+    let orbT = 0;
+    const orbTimer = this.time.addEvent({ delay: 16, loop: true, callback: () => { orbT += 16; drawOrb(orbT); } });
+
+    // Rising hearts from villager positions
+    const spawnHeart = (hx, hy) => {
+      if (!this.scene.isActive('Level2Scene') && !this._revived) return;
+      const hg = this.add.graphics().setScrollFactor(0).setDepth(305);
+      const col = [0xff5fa8, 0xff84c8, 0xffd4ec, 0xffb3da][Math.floor(Math.random() * 4)];
+      hg.fillStyle(col, 0.95);
+      hg.fillCircle(-4, 0, 4); hg.fillCircle(4, 0, 4); hg.fillTriangle(-7, 1, 7, 1, 0, 9);
+      hg.setScale(0.5 + Math.random() * 0.5);
+      hg.x = hx + (Math.random() - 0.5) * 40; hg.y = hy;
+      this.tweens.add({ targets: hg, y: orbY, x: orbX + (Math.random() - 0.5) * 20, alpha: 0, scale: 1.4, duration: 2200 + Math.random() * 800, ease: 'Sine.easeIn', onComplete: () => hg.destroy() });
+    };
+    const heartEvent = this.time.addEvent({ delay: 180, repeat: 28, callback: () => {
+      const hx = 60 + Math.floor(Math.random() * 8) * (W - 120) / 7;
+      spawnHeart(hx, H - 130);
+    }});
+
+    // Letterbox
+    const barH = 60;
+    const barTop = this.add.rectangle(0, 0, W, barH, 0x000000, 1).setOrigin(0, 0).setScrollFactor(0).setDepth(310);
+    const barBot = this.add.rectangle(0, H, W, barH, 0x000000, 1).setOrigin(0, 1).setScrollFactor(0).setDepth(310);
+
+    // Dialogue panel
+    const panelH = 130, panelY = H - barH - panelH - 14;
+    const panelBg = this.add.graphics().setScrollFactor(0).setDepth(311);
+    panelBg.fillStyle(0x0a0a0a, 0.82); panelBg.fillRoundedRect(40, panelY, W - 80, panelH, 10);
+    panelBg.lineStyle(2, 0xffe2a8, 0.9); panelBg.strokeRoundedRect(40, panelY, W - 80, panelH, 10);
+    const speakerLbl = this.add.text(60, panelY + 12, 'THE MONK', {
+      fontFamily: '"Cinzel", Georgia, serif', fontSize: '15px', color: '#ffd166', stroke: '#1a0d05', strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(312);
+    const caption = this.add.text(60, panelY + 38, '', {
+      fontFamily: 'Georgia, serif', fontSize: '18px', color: '#fff5d6', align: 'left', lineSpacing: 4,
+      wordWrap: { width: W - 120 },
+    }).setScrollFactor(0).setDepth(312);
+
+    // Dialogue lines
+    const lines = [
+      { speaker: 'THE MONK',     text: 'The villagers\' prayers… they hold her still. This warmth can pull her back. But only once.' },
+      { speaker: 'THE MONK',     text: 'After this, she faces the Pure White One alone. No one can walk that road for her.' },
+      { speaker: '(whisper)',     text: '"Forgive me, Luna. I have done all I can."' },
+    ];
+
+    let phase = 0;
+    const allObjects = [bg, artImg, orbG, panelBg, speakerLbl, caption, barTop, barBot].filter(Boolean);
+
+    // Fade in art and panel
+    if (artImg && artImg.setAlpha) this.tweens.add({ targets: artImg, alpha: 1, duration: 1000 });
+
+    const showLine = (i) => {
+      if (i >= lines.length) {
+        // Fade out, call done
+        orbTimer.remove();
+        heartEvent.remove();
+        this.tweens.add({ targets: allObjects, alpha: 0, duration: 700,
+          onComplete: () => { allObjects.forEach(o => { try { o.destroy(); } catch(_){} }); orbG.destroy(); onDone(); }
+        });
+        return;
+      }
+      const { speaker, text } = lines[i];
+      speakerLbl.setText(speaker);
+      caption.setText('');
+      let ci = 0;
+      this.time.addEvent({ delay: 30, repeat: text.length - 1, callback: () => { ci++; caption.setText(text.slice(0, ci)); } });
+      const hold = Math.max(1800, text.length * 36);
+      this.time.delayedCall(text.length * 30 + hold, () => {
+        this.tweens.add({ targets: caption, alpha: 0, duration: 250, onComplete: () => { caption.setAlpha(1); showLine(i + 1); } });
+      });
+    };
+    this.time.delayedCall(800, () => showLine(0));
+  }
+
+  // ── GOAL PORTAL ────────────────────────────────────────────────────────────
+  _spawnGoalPortal() {
+    const gx = LEVEL2.WIDTH / 2, gy = LEVEL2.GOAL_Y;
     const pg = this.add.graphics().setDepth(5);
     pg.fillStyle(0xffffff, 1);
-    pg.fillEllipse(gx - 80, gy + 50, 140, 36);
-    pg.fillEllipse(gx,      gy + 40, 220, 50);
-    pg.fillEllipse(gx + 80, gy + 50, 140, 36);
-
-    // Portal arch
+    pg.fillEllipse(gx - 80, gy + 50, 140, 36); pg.fillEllipse(gx, gy + 40, 220, 50); pg.fillEllipse(gx + 80, gy + 50, 140, 36);
     const portal = this.add.container(gx, gy).setDepth(20);
     const aura = this.add.circle(0, 0, 90, 0xfff3b0, 0.4);
     const ring = this.add.circle(0, 0, 70, 0xffffff, 0).setStrokeStyle(5, 0xfff3b0, 0.95);
     const inner = this.add.ellipse(0, 0, 100, 130, 0x6fb6ff, 0.7).setStrokeStyle(3, 0xffffff, 0.9);
     const sparkle = this.add.text(0, -4, '✦', { fontSize: '40px', color: '#ffffff' }).setOrigin(0.5);
-    const lbl = this.add.text(0, 95, 'TO LEVEL 3', {
-      fontSize: '16px', fontFamily: 'Georgia, serif', color: '#ffffff',
-      stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5);
-    const sublbl = this.add.text(0, 115, 'above the clouds', {
-      fontSize: '11px', fontFamily: 'Georgia, serif', color: '#cfeaff',
-      stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0.5);
+    const lbl = this.add.text(0, 95, 'TO LEVEL 3', { fontSize: '16px', fontFamily: 'Georgia, serif', color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5);
+    const sublbl = this.add.text(0, 115, 'above the clouds', { fontSize: '11px', fontFamily: 'Georgia, serif', color: '#cfeaff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
     portal.add([aura, ring, inner, sparkle, lbl, sublbl]);
-
-    this.tweens.add({ targets: aura, scaleX: 1.25, scaleY: 1.25, alpha: 0.65,
-      duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.tweens.add({ targets: aura, scaleX: 1.25, scaleY: 1.25, alpha: 0.65, duration: 1200, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     this.tweens.add({ targets: ring, angle: 360, duration: 8000, repeat: -1 });
     this.tweens.add({ targets: sparkle, scale: 1.2, duration: 900, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-
-    this.physics.add.existing(portal);
-    portal.body.setAllowGravity(false);
-    portal.body.setSize(120, 150);
-    portal.body.setOffset(-60, -75);
-
+    this.physics.add.existing(portal); portal.body.setAllowGravity(false); portal.body.setSize(120, 150); portal.body.setOffset(-60, -75);
     this._goalPortal = { container: portal, x: gx, y: gy, cleared: false };
   }
 
+  // ── LIGHTNING SPAWNING ─────────────────────────────────────────────────────
+  _spawnLightning(cloud) {
+    if (!cloud.alive || !this.player) return;
+    const cx = cloud.container.x, cy = cloud.container.y;
+    // Only fire if cloud is above or near player and within horizontal range
+    const px = this.player.sprite.x, py = this.player.sprite.y;
+    if (Math.abs(cx - px) > 350) return;
+    if (cy > py) return; // only fire if cloud is above player
+    // Create lightning bolt — visible zigzag line + physics rect
+    const bolt = {
+      x: cx, y: cy + 20,
+      vx: (px - cx) * 0.003 * 60, // slight horizontal track
+      vy: 420, // fall speed
+      cloud,
+      gfx: this.add.graphics().setDepth(55),
+      active: true,
+      age: 0,
+    };
+    // Draw the bolt immediately
+    this._drawLightningBolt(bolt);
+    this._lightningBolts.push(bolt);
+    // Flash on cloud
+    if (cloud.container) {
+      this.tweens.add({ targets: cloud.container, alpha: 0.3, duration: 60, yoyo: true, repeat: 1 });
+    }
+  }
+
+  _drawLightningBolt(bolt) {
+    bolt.gfx.clear();
+    if (!bolt.active) return;
+    // Zigzag segments
+    const segs = 6;
+    const dx = bolt.vx * 0.1, dy = 40;
+    let bx = bolt.x, by = bolt.y;
+    bolt.gfx.lineStyle(3, 0xffd84f, 0.95);
+    bolt.gfx.beginPath();
+    bolt.gfx.moveTo(bx, by);
+    for (let i = 0; i < segs; i++) {
+      bx += dx + (Math.random() - 0.5) * 22;
+      by += dy;
+      bolt.gfx.lineTo(bx, by);
+    }
+    bolt.gfx.strokePath();
+    // Glow
+    bolt.gfx.lineStyle(7, 0xffffff, 0.18);
+    bolt.gfx.beginPath();
+    bolt.gfx.moveTo(bolt.x, bolt.y);
+    bolt.gfx.lineTo(bolt.x + dx * segs, bolt.y + dy * segs);
+    bolt.gfx.strokePath();
+  }
+
+  _updateLightning(delta) {
+    const px = this.player ? this.player.sprite.x : 0;
+    const py = this.player ? this.player.sprite.y : 0;
+    for (let i = this._lightningBolts.length - 1; i >= 0; i--) {
+      const bolt = this._lightningBolts[i];
+      if (!bolt.active) { this._lightningBolts.splice(i, 1); continue; }
+      bolt.age += delta;
+      bolt.x += bolt.vx * (delta / 1000);
+      bolt.y += bolt.vy * (delta / 1000);
+      this._drawLightningBolt(bolt);
+      // Hit player?
+      if (Math.abs(bolt.x - px) < 28 && Math.abs(bolt.y - py) < 40) {
+        // Damage player
+        if (this.player && !this.player.isDead && !this.player._invincible) {
+          this.player.takeDamage && this.player.takeDamage(1);
+          this.cameras.main.shake(120, 0.012);
+          this._floatToast('⚡ struck!', '#ffd84f');
+        }
+        bolt.active = false;
+        bolt.gfx.destroy();
+        this._lightningBolts.splice(i, 1);
+        continue;
+      }
+      // Out of bounds or too old
+      if (bolt.y > LEVEL2.HEIGHT + 100 || bolt.age > 3500) {
+        bolt.active = false;
+        bolt.gfx.destroy();
+        this._lightningBolts.splice(i, 1);
+      }
+    }
+  }
+
+  // ── PARRY / REFLECT ────────────────────────────────────────────────────────
+  _doParry() {
+    if (this._gamePaused) return;
+    const now = this.time.now;
+    if (now < this._parryCooldown) return;
+    this._parryCooldown = now + 600; // 0.6s cooldown
+
+    // Visual parry flash around player
+    if (this.player) {
+      const px = this.player.sprite.x, py = this.player.sprite.y;
+      const pg = this.add.graphics().setDepth(200);
+      pg.lineStyle(4, 0xffd84f, 1);
+      pg.strokeCircle(px, py, 45);
+      pg.lineStyle(2, 0xffffff, 0.7);
+      pg.strokeCircle(px, py, 55);
+      this.tweens.add({ targets: pg, alpha: 0, scaleX: 1.4, scaleY: 1.4, duration: 300, onComplete: () => pg.destroy() });
+    }
+
+    // Check all active lightning bolts within parry range (55px)
+    const px = this.player ? this.player.sprite.x : 0;
+    const py = this.player ? this.player.sprite.y : 0;
+    let parried = 0;
+    for (let i = this._lightningBolts.length - 1; i >= 0; i--) {
+      const bolt = this._lightningBolts[i];
+      if (!bolt.active) continue;
+      const dist = Math.hypot(bolt.x - px, bolt.y - py);
+      if (dist < 70) {
+        // Reflect back at the cloud that fired it
+        bolt.vy = -380;
+        bolt.vx = (bolt.cloud.container.x - px) * 0.5;
+        bolt._reflected = true;
+        parried++;
+        // Visual sparkle at reflection point
+        const sg = this.add.graphics().setDepth(201);
+        sg.fillStyle(0xffffff, 1); sg.fillCircle(bolt.x, bolt.y, 8);
+        sg.fillStyle(0xffd84f, 0.8); sg.fillCircle(bolt.x, bolt.y, 5);
+        this.tweens.add({ targets: sg, alpha: 0, scale: 2.5, duration: 250, onComplete: () => sg.destroy() });
+      }
+    }
+
+    // Handle reflected bolts hitting their cloud
+    for (let i = this._lightningBolts.length - 1; i >= 0; i--) {
+      const bolt = this._lightningBolts[i];
+      if (!bolt._reflected || !bolt.active) continue;
+      const cloud = bolt.cloud;
+      if (!cloud || !cloud.alive) { bolt.active = false; bolt.gfx.destroy(); this._lightningBolts.splice(i, 1); continue; }
+      const dist = Math.hypot(bolt.x - cloud.container.x, bolt.y - cloud.container.y);
+      if (dist < 50) {
+        // Destroy cloud
+        cloud.takeDamage && cloud.takeDamage(999);
+        bolt.active = false; bolt.gfx.destroy();
+        this._lightningBolts.splice(i, 1);
+        this._floatToast('⚡ REFLECTED!', '#ffd84f');
+        this.cameras.main.shake(80, 0.008);
+      }
+    }
+
+    if (parried === 0) {
+      // Missed parry — small dust puff
+      this._floatToast('X — parry near lightning!', '#ffffff');
+    }
+  }
+
+  // ── BULLET COLLISIONS ──────────────────────────────────────────────────────
   _checkBulletCollisions() {
     if (!this.arsenal || !this.arsenal.weapons) return;
     for (const weapon of this.arsenal.weapons) {
@@ -14173,88 +14625,116 @@ class Level2Scene extends Phaser.Scene {
             if (weapon.destroyBullet) weapon.destroyBullet(bullet);
             else if (weapon._destroyBullet) weapon._destroyBullet(bullet);
             else bullet.destroy();
-            bullets.splice(i, 1);
-            break;
+            bullets.splice(i, 1); break;
           }
         }
       }
     }
   }
 
+  // ── UPDATE ─────────────────────────────────────────────────────────────────
   update(time, delta) {
     if (!this.player) return;
-    if (this.player.body) {
-      this.player.body._lastBottom = this.player.body.y + this.player.body.height;
+    if (this.player.body) this.player.body._lastBottom = this.player.body.y + this.player.body.height;
+
+    // Refresh moving platform physics bodies every frame
+    for (const mp of this._movingPlatforms) {
+      if (mp.body) mp.body.reset(mp.x, mp.y);
     }
 
+    if (this._gamePaused) return;
+
     const merged = {
-      left:  { isDown: this.cursors.left.isDown  || this.wasd.left.isDown },
+      left: { isDown: this.cursors.left.isDown || this.wasd.left.isDown },
       right: { isDown: this.cursors.right.isDown || this.wasd.right.isDown },
-      up:    { isDown: this.cursors.up.isDown    || this.wasd.up.isDown },
-      down:  { isDown: this.cursors.down.isDown  || this.wasd.down.isDown },
-      // Metal Slug AIM-UP: UP arrow OR W (independent from SPACE = jump).
+      up: { isDown: this.cursors.up.isDown || this.wasd.up.isDown },
+      down: { isDown: this.cursors.down.isDown || this.wasd.down.isDown },
       aimUp: { isDown: (this.cursors.aimUp && this.cursors.aimUp.isDown) || this.wasd.up.isDown },
       shift: { isDown: this.cursors.shift.isDown },
-      backstep: this.cursors.backstep,
+      // Override backstep in Level2: X is parry, not slide
+      backstep: { isDown: false, justDown: false },
       shoot: this.cursors.shoot,
     };
     this.touchControls.update();
     this.player.update(merged, this.touchControls.active ? this.touchControls : null);
-
     try { window.CMFA && window.CMFA.update(this, time, delta); } catch (e) {}
 
-    const px = this.player.sprite.x;
-    const py = this.player.sprite.y;
-
-    // --- All weapons (arsenal) vs enemies ---
-    // Updates every weapon (HeartGun + BloomHeartGun + anything else added)
-    // and routes hits via the shared bullet→enemy collision helper so the
-    // big heart AND its 20 bloom shards all damage shadow clouds + spangerells.
+    const px = this.player.sprite.x, py = this.player.sprite.y;
     this.arsenal.update();
     this._checkBulletCollisions();
 
-    // --- Update enemies ---
-    for (const e of this.shadowClouds) { if (e.update) e.update(delta); }
+    // Lightning tick
+    this._updateLightning(delta);
 
-    // --- Altitude readout (0m at ground, increases as you climb) ---
+    // Update enemies — chasers move toward player from below; clouds fire lightning
+    for (const e of this.shadowClouds) {
+      if (e._isChaser && e.alive) {
+        const dx = px - e.container.x, dy = py - e.container.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 0) {
+          const spd = (60 + (LEVEL2.GROUND_Y - py) * 0.02) * (delta / 1000);
+          e.container.x += (dx / dist) * spd;
+          e.container.y += (dy / dist) * spd;
+          e.startX = e.container.x; e.startY = e.container.y;
+        }
+      }
+      // Lightning firing — each cloud fires every 3.5–6s when within range of player
+      if (e.alive && !e._lightningTimer) {
+        e._lightningTimer = this.time.addEvent({
+          delay: Phaser.Math.Between(3500, 6000),
+          loop: true,
+          callback: () => { if (!this._gamePaused) this._spawnLightning(e); },
+        });
+      }
+      if (e.update) e.update(delta);
+    }
+
+    // Darkness overlay — grows as player climbs above cloud line
+    if (this._darknessOverlay) {
+      const cloudRange = LEVEL2.CLOUD_LINE_Y - LEVEL2.SKY_TOP_Y;
+      const aboveCloud = Math.max(0, LEVEL2.CLOUD_LINE_Y - py);
+      const darkT = Math.min(1, aboveCloud / cloudRange);
+      this._darknessOverlay.fillAlpha = darkT * 0.72;
+    }
+
+    // Boss peek triggers — 3 times as player approaches cloud line
+    if (!this._deathFired && !this._bossPeeking) {
+      const peekThresholds = [LEVEL2.CLOUD_LINE_Y + 500, LEVEL2.CLOUD_LINE_Y + 200, LEVEL2.CLOUD_LINE_Y - 50];
+      const threshold = peekThresholds[this._bossPeeks] || 99999;
+      if (py < threshold) this._triggerBossPeek();
+    }
+
+    // Altitude readout
     if (this._altitudeText) {
       const climbed = Math.max(0, LEVEL2.GROUND_Y - py);
-      const total   = LEVEL2.GROUND_Y - LEVEL2.GOAL_Y;
-      const meters  = Math.round((climbed / total) * 1000);
+      const total = LEVEL2.GROUND_Y - LEVEL2.GOAL_Y;
+      const meters = Math.round((climbed / total) * 1000);
       this._altitudeText.setText(`ALT ${meters}m`);
-      // Color shifts as you cross the cloud line
       if (py < LEVEL2.SKY_TOP_Y + 200) this._altitudeText.setColor('#fff3b0');
       else if (py < LEVEL2.CLOUD_LINE_Y) this._altitudeText.setColor('#cfeaff');
       else this._altitudeText.setColor('#ffffff');
     }
 
-    // --- Cloud-line crossing toast (once) ---
-    if (!this._announcedCloudLine && py < LEVEL2.CLOUD_LINE_Y) {
-      this._announcedCloudLine = true;
-      this._floatToast('☁ ENTERING THE CLOUDS', '#ffffff');
-    }
-    if (!this._announcedAbove && py < LEVEL2.SKY_TOP_Y + 400) {
-      this._announcedAbove = true;
-      this._floatToast('☀ ABOVE THE CLOUDS — Level 3 awaits', '#fff3b0');
-    }
+    if (!this._announcedCloudLine && py < LEVEL2.CLOUD_LINE_Y) { this._announcedCloudLine = true; this._floatToast('☁  ENTERING THE CLOUDS', '#cfeaff'); }
+    if (!this._announcedAbove && py < LEVEL2.SKY_TOP_Y + 400) { this._announcedAbove = true; this._floatToast('★  ABOVE THE CLOUDS — the egg awaits', '#fff3b0'); }
 
     if (this.colorSaturation) this.colorSaturation.update(px, delta);
 
-    // --- Goal portal touch ---
+    // Goal portal touch
     if (this._goalPortal && !this._goalPortal.cleared) {
       const d = this._goalPortal;
       if (Math.abs(px - d.x) < 60 && Math.abs(py - d.y) < 80) {
         d.cleared = true;
-        this._floatToast('★ LEVEL 2 COMPLETE — ASCENDING TO LEVEL 3 ★', '#fff3b0');
+        this._floatToast('★ LEVEL 2 COMPLETE ★', '#fff3b0');
         this.cameras.main.flash(400, 255, 243, 176);
         this.time.delayedCall(900, () => this.events.emit('level2complete'));
       }
     }
 
-    // Fall-off respawn (back to ground)
+    // Fall-off respawn
     if (py > LEVEL2.HEIGHT + 100) {
       this.player.sprite.setPosition(140, LEVEL2.GROUND_Y - 80);
-      this.player.body.setVelocity(0, 0);
+      if (this.player.body) this.player.body.setVelocity(0, 0);
       this.player.health = this.player.maxHealth;
       this.events.emit('playerHealed', this.player.health, this.player.maxHealth);
     }
@@ -14262,13 +14742,6 @@ class Level2Scene extends Phaser.Scene {
 }
 
 
-/* ====================================================================
-   ===== CINEMATIC SCENES (Ghibli interludes) =========================
-   Three skippable cinematics, ~11s each, gated by GHIBLI_MODE.
-   A = intro (desaturated ruins, bubble silhouette drifts up)
-   B = post-Level 1 (vibrant golden sky + sunburst + cumulus reveal)
-   C = post-Level 2 (celestial above-clouds, sage specter)
-   ==================================================================== */
 class CinematicBaseScene extends Phaser.Scene {
   constructor(key, opts) {
     super({ key });
@@ -14783,7 +15256,10 @@ class CinematicCScene extends CinematicBaseScene {
 // CinematicDScene (formerly VillagerWarmthScene) — villager-warmth interlude between Level1 and Level2.
 class CinematicDScene extends Phaser.Scene {
   constructor() { super({ key: 'CinematicDScene' }); }
-  init(data) { this._next = (data && data.next) || 'CinematicBScene'; }
+  init(data) {
+    this._next = (data && data.next) || 'CinematicBScene';
+    this._nextData = (data && data.revival) ? { revival: true, carry: data.carry } : null;
+  }
   create() {
     const W = this.scale.width, H = this.scale.height;
     // Sky gradient — deep dusk to soft pink
@@ -14870,11 +15346,14 @@ class CinematicDScene extends Phaser.Scene {
       this.tweens.add({ targets: caption, alpha: 1, duration: 500, hold: 1800, yoyo: true, onComplete: showLine });
     };
     this.time.delayedCall(400, showLine);
-    // End → next scene
+    // End → next scene (passes revival data if this is a death revival)
     const end = () => {
       if (this._ended) return; this._ended = true;
       this.cameras.main.fadeOut(700, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start(this._next));
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        if (this._nextData) this.scene.start(this._next, this._nextData);
+        else this.scene.start(this._next);
+      });
     };
     this.input.once('pointerdown', end);
     this.input.keyboard.once('keydown-ESC', end);
