@@ -9,6 +9,8 @@ const config = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: GAME_WIDTH,
+    height: GAME_HEIGHT,
   },
   physics: {
     default: 'arcade',
@@ -25,3 +27,9 @@ const config = {
 
 const game = new Phaser.Game(config);
 window.game = game; // debug access
+
+// Ensure Phaser recomputes canvas size and pointer offsets on resize / orientation change
+window.addEventListener('resize', () => game.scale.refresh());
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => game.scale.refresh(), 100);
+});
