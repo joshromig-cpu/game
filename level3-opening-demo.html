@@ -139,6 +139,18 @@ class L3Scene extends Phaser.Scene {
     this.fxLayer = this.add.graphics().setDepth(100);
     this.auraLayer = this.add.graphics().setDepth(60);
 
+    // ---------- F7: DARKNESS & SWARM REVEAL ----------
+    // Near-black overlay sitting above the world but BELOW the fx/HUD
+    // layers. Enemies are invisible by default — they're only revealed
+    // during lightning flashes and while the player's heart beam is in
+    // flight. Enemy MOVEMENT/AI is NOT touched; only their alpha.
+    this.darkOverlay = this.add.rectangle(W/2, H/2, W*3, H*3, 0x000010, 0.85)
+      .setScrollFactor(0).setDepth(45);
+    // Counts down each frame in ms — enemies are revealed while > 0.
+    this.revealTimer = 0;
+    // While true, fxLayer "soft reveal" pulses are blended in too.
+    this._darknessOn = true;
+
     // ---------- CAMERA — zoom way out ----------
     this.cameras.main.startFollow(this.player, true, 0.08, 0.08);
     this.cameras.main.setZoom(0.42);    // zoomed way out so all 40 enemies visible
@@ -268,7 +280,9 @@ class L3Scene extends Phaser.Scene {
     const e = this.physics.add.image(x, y, 'darkCloud');
     e.setScale(Phaser.Math.FloatBetween(0.55, 0.95));
     e.body.setAllowGravity(false);
-    e.setDepth(45);
+    e.setDepth(46); // above the dark overlay so reveal can show them
+    // F7 — invisible by default; behavior untouched.
+    if (this._darknessOn) e.setAlpha(0);
     e.setData('hp', 2);
     e.setData('mode', 'approach');
     e.setData('strikeCD', Phaser.Math.Between(800, 2200));
@@ -297,6 +311,7 @@ class L3Scene extends Phaser.Scene {
     this.animateCreature(time);
     this.updateEnemies(time, dt);
     this.updateBeams();
+    this._tickReveal(dms); // F7
     this.fxLayer.clear();
     this.drawHitAura();
     this.drawHearts();
@@ -426,6 +441,10 @@ class L3Scene extends Phaser.Scene {
     const s = this.state;
     const ox = this.player.x + (s.facing*120);
     const oy = this.player.y + 4;
+
+    // F7: while the heart beam is in flight, swarm is revealed.
+    // Beam life is 1400ms (see updateBeams) — match it.
+    this._bumpReveal(1400);
 
     // main heart projectile
     const heart = this.physics.add.image(ox, oy, 'heart');
@@ -584,10 +603,25 @@ class L3Scene extends Phaser.Scene {
     for(let i=0;i<pts.length-1;i++) this.fxLayer.lineBetween(pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1]);
   }
 
+  // F7 — reveal swarm during flashes / beam fire.
+  _bumpReveal(ms){ this.revealTimer = Math.max(this.revealTimer, ms); }
+  _tickReveal(dms){
+    if (!this._darknessOn) return;
+    if (this.revealTimer > 0) this.revealTimer -= dms;
+    const revealed = this.revealTimer > 0;
+    // Soften the dark overlay during a reveal so the world reads as "lit".
+    this.darkOverlay.fillAlpha = revealed ? 0.35 : 0.85;
+    // Sync enemy alpha. We DO NOT touch position/velocity/AI — only alpha.
+    const targetA = revealed ? 1 : 0;
+    this.enemies.children.iterate(e => { if (e && e.active) e.alpha = targetA; });
+  }
+
   cloudLightning(){
     // pick a random storm cloud and zap below it
     const c = Phaser.Utils.Array.GetRandom(this.stormCloudsTop);
     if(!c) return;
+    // F7: a lightning strike briefly reveals the swarm.
+    this._bumpReveal(420);
     const sx = c.x;
     const sy = c.y + 30;
     const ex = sx + Phaser.Math.Between(-80, 80);

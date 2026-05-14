@@ -71,10 +71,32 @@ class Level3BossScene extends Phaser.Scene {
       this.slabRects.push(rect);
     });
 
+    // Tell shared GAME_STATE which level we're on.
+    setCurrentLevelFromScene(this);
+
     // ---------- Player ----------
     this.player = new Player(this, 200, groundY - 80);
     this.physics.add.collider(this.player.sprite, this.platforms);
     this.player.createMirrorShield();
+
+    // F10 — boss-fight player aura (dark red tier).
+    this.playerAura = new PlayerAura(this);
+
+    // ---------- Ally Cloud manager (F5) — boss only gets *scripted* spawns.
+    this.allyManager = new AllyCloudManager(this);
+    // Three scripted, brief moments — one per cloud type at phase transitions.
+    // Each cloud auto-despawns after 9s if the player ignores it.
+    this.time.delayedCall(7000, () => {
+      if (this.allyManager) this.allyManager.scriptedSpawn('shooter', GAME_WIDTH * 0.25, groundY - 200, 9000);
+    });
+    // Phase 2 entry — Lift cloud cameo
+    this.events.on('bossEnteredPhase2', () => {
+      this.allyManager.scriptedSpawn('lift', GAME_WIDTH * 0.7, groundY - 240, 9000);
+    });
+    // Phase 3 entry — Bubble cloud for the finisher
+    this.events.on('bossEnteredPhase3', () => {
+      this.allyManager.scriptedSpawn('bubble', this.player.sprite.x + 60, this.player.sprite.y - 40, 9000);
+    });
 
     // ---------- Cursors ----------
     this.cursors = this.input.keyboard.createCursorKeys();
@@ -285,27 +307,59 @@ class Level3BossScene extends Phaser.Scene {
   }
 
   // ==================================================================
-  // BULLETS (reuse Level1 pattern)
+  // BULLETS (Feature 1) — same heart-projectile system used in Level 1;
+  // re-implemented in this scene's namespace so Player._fireHeart's call
+  // to `this.scene.spawnHeart(...)` resolves here too. Do NOT call into
+  // Level1's spawnHeart — only the active scene is alive at any time.
   // ==================================================================
   spawnHeart(x, y, dir) {
     const speed = WEAPONS.HEART_GUN.BULLET_SPEED;
+
+    // Larger, brighter heart graphic so projectiles are clearly visible
+    // against the busy boss-fight backdrop.
     const g = this.add.graphics();
     g.fillStyle(0xff6ea6, 1);
-    g.fillCircle(-4, 0, 6);
-    g.fillCircle(4, 0, 6);
-    g.fillTriangle(-9, 1, 9, 1, 0, 11);
+    g.fillCircle(-5, -2, 7);
+    g.fillCircle(5, -2, 7);
+    g.fillTriangle(-11, 0, 11, 0, 0, 13);
     g.fillStyle(0xffc4d8, 0.9);
-    g.fillCircle(-3, -2, 2);
+    g.fillCircle(-3, -4, 3);
     g.x = x; g.y = y;
-    g.setDepth(8);
+    g.setDepth(20);
 
-    const glow = this.add.circle(x, y, 10, 0xff9ab8, 0.5).setDepth(7);
+    const glow = this.add.circle(x, y, 16, 0xff9ab8, 0.55).setDepth(19);
 
-    // Muzzle flash
-    const flash = this.add.circle(x, y, 14, 0xff9ab8, 0.9).setDepth(9);
-    this.tweens.add({ targets: flash, scale: 0.2, alpha: 0, duration: 160, onComplete: () => flash.destroy() });
+    // Muzzle flash — slightly bigger so it reads at a glance
+    const flash = this.add.circle(x, y, 18, 0xff9ab8, 0.95).setDepth(21);
+    this.tweens.add({
+      targets: flash, scale: 0.2, alpha: 0, duration: 200,
+      onComplete: () => flash.destroy(),
+    });
 
-    this.heartBullets.push({ g, glow, x, y, dir, speed, life: 1500, damage: WEAPONS.HEART_GUN.DAMAGE });
+    const bullet = { g, glow, x, y, dir, speed, life: 1500, damage: WEAPONS.HEART_GUN.DAMAGE };
+
+    // Trailing sparkle dots (matches Level 1's heart trail). Stops itself
+    // when the bullet graphic is destroyed.
+    const trailTimer = this.time.addEvent({
+      delay: 55,
+      loop: true,
+      callback: () => {
+        if (!g.active) { trailTimer.destroy(); return; }
+        const t = this.add.circle(
+          bullet.x - dir * 9,
+          bullet.y + Phaser.Math.Between(-3, 3),
+          Phaser.Math.FloatBetween(2, 4), 0xff9ab8, 0.55
+        ).setDepth(18);
+        this.tweens.add({
+          targets: t, alpha: 0, scale: 0,
+          duration: 180, ease: 'Quad.easeOut',
+          onComplete: () => t.destroy(),
+        });
+      },
+    });
+    bullet.trailTimer = trailTimer;
+
+    this.heartBullets.push(bullet);
   }
 
   // ==================================================================
@@ -546,6 +600,7 @@ class Level3BossScene extends Phaser.Scene {
       }
       if (hit || b.life <= 0 || b.x < -30 || b.x > GAME_WIDTH + 30) {
         b.g.destroy(); b.glow.destroy();
+        if (b.trailTimer) b.trailTimer.destroy();
         this.heartBullets.splice(i, 1);
       }
     }
@@ -555,6 +610,12 @@ class Level3BossScene extends Phaser.Scene {
 
     // Beams
     this._tickBeams(time, delta);
+
+    // Ally Cloud manager (boss-scene scripted spawns) — F5.
+    if (this.allyManager) this.allyManager.update(time, delta);
+
+    // F10 — player aura tick.
+    if (this.playerAura) this.playerAura.update(time);
 
     // UI updates
     this.playerHpBar.scaleX = Math.max(0, this.player.hp / this.player.maxHp);
@@ -576,6 +637,7 @@ class Level3BossScene extends Phaser.Scene {
     if (this.boss && this.phase === 'p1' && this.boss.hp <= BOSS.HP_TOTAL - BOSS.PHASE_1_HP) {
       this.phase = 'p2';
       this.boss.enterPhase2();
+      this.events.emit('bossEnteredPhase2');
       this._sayTaunt('This has been a journey for you...', 2800);
       this.time.delayedCall(3000, () => {
         this._sayTaunt('Now is the real time where you discover\nthat you are as blank as a canvas.', 3400);
@@ -584,6 +646,7 @@ class Level3BossScene extends Phaser.Scene {
     if (this.boss && this.phase === 'p2' && this.boss.hp <= BOSS.PHASE_3_HP) {
       this.phase = 'p3';
       this.boss.enterPhase3();
+      this.events.emit('bossEnteredPhase3');
       this._sayTaunt('...is that... me?', 2600);
     }
     if (this.boss && this.boss.hp <= 0 && this.phase !== 'outro') {

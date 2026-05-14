@@ -55,6 +55,14 @@ class Level1Scene extends Phaser.Scene {
     this._traceHills(nearHills, 590, 60, 8, 0.0032);
     nearHills.setScrollFactor(0.7);
 
+    // --- Observation zones (F12) — declared up here so enemy spawns can
+    // be filtered out of these bands. Sauna lives inside the first zone.
+    this.observationZones = [
+      { xStart: 2200, xEnd: 2900, sauna: true,  saunaOffset: 0.55, slowMul: 0.55 },
+      { xStart: 6300, xEnd: 6900, sauna: false, slowMul: 0.65 },
+    ];
+    const _inAnyZone = (x) => this.observationZones.some(z => x >= z.xStart && x <= z.xEnd);
+
     // --- Cloud enemies (aerial, spotlight beams) ---
     this.enemies = [];
     const cloudSpawns = [
@@ -78,7 +86,10 @@ class Level1Scene extends Phaser.Scene {
       { x: 11500, y: 170, scale: 1.0 },
     ];
     cloudSpawns.forEach(s => {
-      this.enemies.push(new CloudEnemy(this, s.x, s.y, s));
+      if (_inAnyZone(s.x)) return; // F12 — peaceful zones get no enemies
+      // Apply F11 tuning: scale up cloud enemies a bit so they feel more imposing.
+      const scaled = Object.assign({}, s, { scale: (s.scale || 1.0) * TUNING.CLOUD_ENEMY_SCALE });
+      this.enemies.push(new CloudEnemy(this, s.x, s.y, scaled));
     });
 
     // --- Ground enemies (Spangerells — patrol + charge) ---
@@ -103,8 +114,12 @@ class Level1Scene extends Phaser.Scene {
       { x: 11250, y: LEVEL.GROUND_Y - 30, range: 200 },
     ];
     spangerellSpawns.forEach(s => {
+      if (_inAnyZone(s.x)) return; // F12 — no Spangerells in observation zones
       this.groundEnemies.push(new Spangerell(this, s.x, s.y, { patrolRange: s.range }));
     });
+
+    // Instantiate observation zones (also creates the sauna inside the first one).
+    this._zones = this.observationZones.map(z => new ObservationZone(this, z.xStart, z.xEnd, z));
 
     // --- Ground: dirt body + grass cap ---
     this.platforms = this.physics.add.staticGroup();
@@ -192,9 +207,29 @@ class Level1Scene extends Phaser.Scene {
       });
     });
 
+    // Tell shared GAME_STATE which level we're on (drives F5/F10 gating).
+    setCurrentLevelFromScene(this);
+
     // --- Player ---
     this.player = new Player(this, 100, LEVEL.GROUND_Y - 60);
     this.physics.add.collider(this.player.sprite, this.platforms);
+
+    // F10 — per-level visual sprite upgrade (tint + halo orb + aura).
+    this.playerAura = new PlayerAura(this);
+
+    // --- Ally Clouds (Features 2-6) ---
+    // Spec is level-aware: levels [1,3] = appears in Level 1 and Level 3.
+    // Level 2 receives nothing because no entry lists "2".
+    this.allyManager = new AllyCloudManager(this);
+    this.allyManager.spawnForCurrentLevel([
+      { type: 'shooter', x: 1100, y: LEVEL.GROUND_Y - 200, levels: [1, 3] },
+      { type: 'lift',    x: 3300, y: LEVEL.GROUND_Y - 220, levels: [1, 3] },
+      { type: 'bubble',  x: 5400, y: LEVEL.GROUND_Y - 200, levels: [1, 3] },
+      // Second pass further into the level
+      { type: 'shooter', x: 7800, y: LEVEL.GROUND_Y - 220, levels: [1, 3] },
+      { type: 'lift',    x: 9400, y: LEVEL.GROUND_Y - 240, levels: [1, 3] },
+      { type: 'bubble',  x: 11000, y: LEVEL.GROUND_Y - 200, levels: [1, 3] },
+    ]);
 
     this.physics.add.overlap(this.player.sprite, this.coins, (player, coin) => {
       coin.destroy();
@@ -214,6 +249,7 @@ class Level1Scene extends Phaser.Scene {
     // --- Camera with facing-based lookahead ---
     // Manual camera — do NOT use startFollow, we scroll manually for lookahead control
     this.cameras.main.setBounds(0, 0, LEVEL.WIDTH, LEVEL.HEIGHT);
+    this.cameras.main.setZoom(TUNING.CAMERA_ZOOM); // F11 — slight zoom-out
     this.physics.world.setBounds(0, 0, LEVEL.WIDTH, LEVEL.HEIGHT + 200);
 
     // Camera state
@@ -269,6 +305,37 @@ class Level1Scene extends Phaser.Scene {
     this.enemies.forEach(e => e.update(time, delta, this.player));
     this.groundEnemies.forEach(e => e.update(time, delta, this.player));
 
+    // Ally Cloud manager (F2-F6) — handles intros, activation, lift/shoot/bubble logic.
+    if (this.allyManager) this.allyManager.update(time, delta);
+
+    // Per-level player aura (F10) — follows the player.
+    if (this.playerAura) this.playerAura.update(time);
+
+    // F10 — egg-crack narrative when the player reaches the world edge.
+    // One-shot trigger using a flag so it can't repeat. Visual + dialogue
+    // only; actual stat buffs are layered via GAME_STATE flags (read by
+    // the next scene's aura tier).
+    if (!this._eggCracked && this.player.sprite.x > LEVEL.WIDTH - 240) {
+      this._eggCracked = true;
+      this._playEggCrackNarrative();
+    }
+
+    // Observation zones / Sauna stations (F8, F12).
+    let zoneSlow = 1;
+    if (this._zones) {
+      for (const z of this._zones) {
+        z.update(time);
+        if (z.contains(this.player)) zoneSlow = z.slowMul;
+      }
+    }
+    this._cameraSlowMul = zoneSlow;
+
+    // Stomp-to-kill (F9). Resolved BEFORE the side-contact damage check so a
+    // landing on top is interpreted as a stomp, not a side hit. We never touch
+    // Player.update or any enemy class — we just read positions/velocity and
+    // call the existing takeDamage / setVelocityY on instances.
+    this._resolveStomps();
+
     // Contact damage for cloud bodies (player touches cloud → small damage)
     this.enemies.forEach(e => {
       if (!e.alive) return;
@@ -284,23 +351,31 @@ class Level1Scene extends Phaser.Scene {
     const LOOKAHEAD = 200;
     const VERT_OFFSET = -40; // keep player slightly below center
 
+    // Account for zoom (F11). visibleW/H = GAME_W/H / zoom.
+    const z = cam.zoom || 1;
+    const visibleW = GAME_WIDTH / z;
+    const visibleH = GAME_HEIGHT / z;
+
     // Lerp lookahead toward facing direction
     const targetLookahead = this.player.facingRight ? LOOKAHEAD : -LOOKAHEAD;
     this._camLookaheadX += (targetLookahead - this._camLookaheadX) * 0.04;
 
     // Target scroll position: center on player + lookahead
-    const targetScrollX = this.player.sprite.x + this._camLookaheadX - GAME_WIDTH / 2;
-    const targetScrollY = this.player.sprite.y + VERT_OFFSET - GAME_HEIGHT / 2;
+    const targetScrollX = this.player.sprite.x + this._camLookaheadX - visibleW / 2;
+    const targetScrollY = this.player.sprite.y + VERT_OFFSET - visibleH / 2;
 
     // Smooth follow (lerp) — same feel as startFollow(sprite, true, 0.08, 0.08)
-    const lerpX = 0.08;
-    const lerpY = 0.08;
+    // Optional slowdown applied by observation zones (F12).
+    const lerpBase = 0.08;
+    const lerpScale = (this._cameraSlowMul != null) ? this._cameraSlowMul : 1;
+    const lerpX = lerpBase * lerpScale;
+    const lerpY = lerpBase * lerpScale;
     cam.scrollX += (targetScrollX - cam.scrollX) * lerpX;
     cam.scrollY += (targetScrollY - cam.scrollY) * lerpY;
 
-    // Clamp to world bounds
-    cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, LEVEL.WIDTH - GAME_WIDTH);
-    cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, LEVEL.HEIGHT - GAME_HEIGHT);
+    // Clamp to world bounds (account for zoomed visible area)
+    cam.scrollX = Phaser.Math.Clamp(cam.scrollX, 0, Math.max(0, LEVEL.WIDTH - visibleW));
+    cam.scrollY = Phaser.Math.Clamp(cam.scrollY, 0, Math.max(0, LEVEL.HEIGHT - visibleH));
 
     // --- Manual heart bullet update ---
     const speed = WEAPONS.HEART_GUN.BULLET_SPEED;
@@ -426,6 +501,150 @@ class Level1Scene extends Phaser.Scene {
         });
       },
     });
+  }
+
+  // --- F10: egg-crack narrative when the player completes the level.
+  // Shows a full-screen overlay + dialogue, records an upgrade on
+  // GAME_STATE.upgrades that future levels can read. We never modify the
+  // existing weapon system here — buffs are layered, not in-place edits.
+  _playEggCrackNarrative() {
+    const text = (typeof PLAYER_AURA_NARRATIVE !== 'undefined' && PLAYER_AURA_NARRATIVE[GAME_STATE.currentLevel])
+      ? PLAYER_AURA_NARRATIVE[GAME_STATE.currentLevel]
+      : "You crack the egg. A warmth settles into your shoulders.";
+
+    // Record an upgrade tier on GAME_STATE — used as a hook for future
+    // shoot-system tuning without editing the current shooting code.
+    GAME_STATE.upgrades = GAME_STATE.upgrades || { tier: 0, names: [] };
+    GAME_STATE.upgrades.tier = Math.max(GAME_STATE.upgrades.tier, GAME_STATE.currentLevel);
+    GAME_STATE.upgrades.names.push('Garment-' + GAME_STATE.currentLevel);
+
+    // Full-screen dimmer.
+    const dim = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2,
+      GAME_WIDTH * 2, GAME_HEIGHT * 2, 0x000010, 0).setScrollFactor(0).setDepth(300);
+    this.tweens.add({ targets: dim, alpha: 0.7, duration: 600 });
+
+    // Cracking egg illustration
+    const egg = this.add.graphics().setScrollFactor(0).setDepth(301);
+    const ex = GAME_WIDTH / 2, ey = GAME_HEIGHT / 2 - 60;
+    egg.fillStyle(0xfff6dc, 1);
+    egg.fillEllipse(ex, ey, 110, 140);
+    egg.lineStyle(2, 0xc8a060, 0.9);
+    egg.strokeEllipse(ex, ey, 110, 140);
+    egg.lineStyle(2, 0x6a3a20, 1);
+    egg.beginPath();
+    egg.moveTo(ex - 40, ey - 10);
+    egg.lineTo(ex - 20, ey + 4);
+    egg.lineTo(ex - 5, ey - 8);
+    egg.lineTo(ex + 12, ey + 6);
+    egg.lineTo(ex + 35, ey - 4);
+    egg.strokePath();
+
+    // Burst of light
+    const burst = this.add.circle(ex, ey, 30, 0xfff6dc, 0.9).setScrollFactor(0).setDepth(302);
+    this.tweens.add({
+      targets: burst, scale: 6, alpha: 0, duration: 1400, ease: 'Quad.easeOut',
+    });
+
+    // Narrative
+    const dialogue = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 80, text, {
+      fontFamily: 'Georgia, serif', fontSize: '18px', color: '#fff6e8',
+      align: 'center', wordWrap: { width: GAME_WIDTH * 0.7 },
+      stroke: '#1a0a20', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(302).setAlpha(0);
+    this.tweens.add({ targets: dialogue, alpha: 1, duration: 800, delay: 400 });
+
+    const press = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 60,
+      'press SPACE to continue', {
+        fontFamily: 'Georgia, serif', fontSize: '14px', color: '#ffe0a8',
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(302).setAlpha(0);
+    this.tweens.add({ targets: press, alpha: 0.8, duration: 800, delay: 1600 });
+
+    // Dismiss handler — clears everything but keeps the upgrade.
+    const dismiss = () => {
+      this.input.keyboard.off('keydown-SPACE', dismiss);
+      this.input.off('pointerdown', dismiss);
+      [dim, egg, burst, dialogue, press].forEach(o => {
+        if (o && o.active) {
+          this.tweens.add({ targets: o, alpha: 0, duration: 400, onComplete: () => o.destroy() });
+        }
+      });
+    };
+    this.time.delayedCall(1600, () => {
+      this.input.keyboard.once('keydown-SPACE', dismiss);
+      this.input.once('pointerdown', dismiss);
+    });
+  }
+
+  // --- F9: stomp-to-kill resolution. Self-contained, runs before contact
+  // damage. If the player is moving downward and their feet land on top of
+  // an enemy this frame, the enemy dies and the player bounces upward.
+  _resolveStomps() {
+    const p = this.player;
+    if (!p || !p.body) return;
+    const vy = p.body.velocity.y;
+    // Must be moving downward fast enough to count as a stomp.
+    if (vy < 80) return;
+
+    const feetY = p.sprite.y + PLAYER.HEIGHT / 2;
+    const STOMP_BAND = 18; // forgiveness above enemy top
+    const BOUNCE_VY = -360;
+    const STOMP_DAMAGE = 999; // one-shot
+
+    const tryStomp = (e, halfW, topY) => {
+      if (!e.alive) return false;
+      const cx = e.container ? e.container.x : (e.body ? e.body.x : null);
+      if (cx == null) return false;
+      const dx = Math.abs(p.sprite.x - cx);
+      if (dx > halfW + PLAYER.WIDTH / 2 - 6) return false;
+      const dy = feetY - topY;
+      if (dy < -STOMP_BAND || dy > STOMP_BAND + 18) return false;
+      // Squish + die
+      this._stompSquish(e);
+      if (typeof e.takeDamage === 'function') e.takeDamage(STOMP_DAMAGE);
+      // Bounce player
+      p.body.setVelocityY(BOUNCE_VY);
+      return true;
+    };
+
+    // Cloud enemies — top of cloud body sits ~14 px above container center.
+    for (const e of this.enemies) {
+      if (!e.alive) continue;
+      const halfW = 36 * (e.scaleFactor || 1);
+      const topY = (e.container ? e.container.y : 0) - 16 * (e.scaleFactor || 1);
+      if (tryStomp(e, halfW, topY)) break;
+    }
+    // Ground enemies (Spangerells).
+    for (const e of this.groundEnemies) {
+      if (!e.alive) continue;
+      const halfW = ENEMIES.SPANGERELL.WIDTH / 2;
+      const topY = e.body.y - ENEMIES.SPANGERELL.HEIGHT / 2;
+      if (tryStomp(e, halfW, topY)) break;
+    }
+  }
+
+  _stompSquish(enemy) {
+    const target = enemy.container;
+    if (!target) return;
+    // Quick squash without affecting the enemy's existing tweens.
+    const startY = target.scaleY;
+    this.tweens.add({
+      targets: target,
+      scaleY: startY * 0.4,
+      scaleX: (target.scaleX || 1) * 1.3,
+      duration: 90,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
+    // Stars
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const s = this.add.circle(target.x, target.y, 3, 0xffffff, 0.95).setDepth(11);
+      this.tweens.add({
+        targets: s, x: target.x + Math.cos(a) * 40, y: target.y + Math.sin(a) * 40,
+        alpha: 0, duration: 320,
+        onComplete: () => s.destroy(),
+      });
+    }
   }
 
   // --- Drawing helpers ---

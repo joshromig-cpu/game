@@ -3,6 +3,43 @@
 const GAME_WIDTH = 1280;
 const GAME_HEIGHT = 720;
 
+// ====================================================================
+// TUNING — Feature 11
+// Easy-to-adjust knobs for camera framing and cloud enemy presence.
+// Tweak these without touching any other code.
+// ====================================================================
+const TUNING = {
+  // 1.0 = current framing. <1.0 = more zoomed out (smaller player on screen).
+  // 0.85 starts the player slightly more zoomed out than before.
+  CAMERA_ZOOM: 0.85,
+
+  // Multiplier applied to cloud enemy scale on spawn. 1.0 = original size.
+  // >1.0 makes cloud enemies bigger and more imposing.
+  CLOUD_ENEMY_SCALE: 1.25,
+};
+
+// ====================================================================
+// GAME_STATE — shared, lightweight level-tracking singleton used by
+// features that need to know which level we're in (ally cloud gating,
+// per-level visual sprite upgrade, etc). Avoid mutating from gameplay
+// code — scenes set this in their create().
+// Values: 1 (L1), 2 (L2), 3 (L3 Celestial Bridge), 4 (Boss Fight)
+// ====================================================================
+const GAME_STATE = {
+  currentLevel: 1,
+  // First-encounter tracking for Ally Clouds — Feature 6.
+  // Keyed by `${levelKey}:${cloudType}` so it resets on a fresh session.
+  allyCloudIntroSeen: {},
+};
+
+function setCurrentLevelFromScene(scene) {
+  const key = scene.scene.key;
+  if (key === 'Level1Scene') GAME_STATE.currentLevel = 1;
+  else if (key === 'Level2Scene') GAME_STATE.currentLevel = 2;
+  else if (key === 'Level3Scene') GAME_STATE.currentLevel = 3;
+  else if (key === 'Level3BossScene') GAME_STATE.currentLevel = 4;
+}
+
 const PLAYER = {
   // Movement — smooth, floaty, momentum-based (Gris-like)
   WALK_ACCEL: 400,        // Gradual acceleration (not instant)
