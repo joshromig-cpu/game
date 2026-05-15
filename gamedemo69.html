@@ -7430,7 +7430,12 @@ class BootScene extends Phaser.Scene {
       targets: startText, alpha: 0.3, duration: 1000, yoyo: true, repeat: -1,
     });
 
-    this.input.once('pointerdown', () => this.scene.start('PreloadScene'));
+    this.input.once('pointerdown', () => {
+      // A tap on BootScene means "skip everything" — assets still need to load,
+      // but PreloadScene will jump straight to Level1Scene when it's done.
+      try { window.__SKIP_OPENING = true; } catch(_){}
+      this.scene.start('PreloadScene');
+    });
 
     this._elapsed = 0;
     this._ready = false;
@@ -7756,10 +7761,11 @@ class PreloadScene extends Phaser.Scene {
        this.sound.pauseOnBlur = false; // keep playing if window loses focus briefly
        this.game.registry.set('bgm', bgm);
 
-       // --- Persisted mute state ---
-       let muted = false;
-       try { muted = localStorage.getItem('cmfa_muted') === '1'; } catch (e) {}
-       this.sound.mute = muted;
+       // Sound is ON by default every time the game opens — we deliberately
+       // ignore any previously persisted muted preference. The mute toggle
+       // button is still available for the player to silence things in-session.
+       this.sound.mute = false;
+       try { localStorage.setItem('cmfa_muted', '0'); } catch (e) {}
        // NOTE: bgm is NOT auto-started here. It begins when a Level scene loads.
      }
 
@@ -7829,6 +7835,10 @@ class PreloadScene extends Phaser.Scene {
         this.scene.start('MonkIntroScene');
       } else if (_skipParam && _lvlMap[_levelParam]) {
         this.scene.start(_lvlMap[_levelParam]);
+      } else if (window.__SKIP_OPENING) {
+        // Player tapped during boot — jump straight into gameplay, bypassing
+        // every cinematic and the title screen.
+        this.scene.start('Level1Scene');
       } else {
         this.scene.start('VillageVideoScene');
       }
@@ -7919,13 +7929,14 @@ class VillageVideoScene extends Phaser.Scene {
 
   _addSkip() {
     const W = this.scale.width, H = this.scale.height;
-    this.add.text(W - 18, H - 18, 'click / ESC to skip', {
+    this.add.text(W - 18, H - 18, 'tap to skip', {
       fontFamily: 'sans-serif', fontSize: '12px', color: '#ffffff',
     }).setOrigin(1, 1).setAlpha(0.55).setDepth(80);
-    const skip = () => this._end();
-    this.input.keyboard.once('keydown-ESC',   skip);
-    this.input.keyboard.once('keydown-SPACE', skip);
-    this.input.once('pointerdown', skip);
+    // A tap (or ESC/SPACE) skips the entire opening — straight to gameplay.
+    const skipAll = () => this._skipAll();
+    this.input.keyboard.once('keydown-ESC',   skipAll);
+    this.input.keyboard.once('keydown-SPACE', skipAll);
+    this.input.once('pointerdown', skipAll);
   }
 
   _end() {
@@ -7934,6 +7945,14 @@ class VillageVideoScene extends Phaser.Scene {
     this.tweens.killAll();
     this.cameras.main.fadeOut(600, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('BossVideoScene'));
+  }
+
+  _skipAll() {
+    if (this._ended) return;
+    this._ended = true;
+    this.tweens.killAll();
+    this.cameras.main.fadeOut(400, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Level1Scene'));
   }
 }
 
@@ -8004,13 +8023,13 @@ class BossVideoScene extends Phaser.Scene {
 
   _addSkip() {
     const W = this.scale.width, H = this.scale.height;
-    this.add.text(W - 18, H - 18, 'click / ESC to skip', {
+    this.add.text(W - 18, H - 18, 'tap to skip', {
       fontFamily: 'sans-serif', fontSize: '12px', color: '#ffffff',
     }).setOrigin(1, 1).setAlpha(0.55).setDepth(80);
-    const skip = () => this._end();
-    this.input.keyboard.once('keydown-ESC',   skip);
-    this.input.keyboard.once('keydown-SPACE', skip);
-    this.input.once('pointerdown', skip);
+    const skipAll = () => this._skipAll();
+    this.input.keyboard.once('keydown-ESC',   skipAll);
+    this.input.keyboard.once('keydown-SPACE', skipAll);
+    this.input.once('pointerdown', skipAll);
   }
 
   _end() {
@@ -8019,6 +8038,14 @@ class BossVideoScene extends Phaser.Scene {
     this.tweens.killAll();
     this.cameras.main.fadeOut(600, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('MonkIntroScene'));
+  }
+
+  _skipAll() {
+    if (this._ended) return;
+    this._ended = true;
+    this.tweens.killAll();
+    this.cameras.main.fadeOut(400, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Level1Scene'));
   }
 }
 
@@ -8100,11 +8127,13 @@ class MonkIntroScene extends Phaser.Scene {
     }).setOrigin(1, 1).setAlpha(0.55).setDepth(61);
 
     // --- Skip handlers ---
-    const skip = () => this._end();
-    this.input.keyboard.once('keydown-ESC', skip);
-    this.input.keyboard.once('keydown-SPACE', skip);
-    this.input.keyboard.once('keydown-ENTER', skip);
-    this.input.once('pointerdown', skip);
+    // A tap (or any of these keys) means "skip the entire opening" — bypass
+    // the title screen and drop straight into Level 1.
+    const skipAll = () => this._skipAll();
+    this.input.keyboard.once('keydown-ESC', skipAll);
+    this.input.keyboard.once('keydown-SPACE', skipAll);
+    this.input.keyboard.once('keydown-ENTER', skipAll);
+    this.input.once('pointerdown', skipAll);
 
     // Visible SKIP → pill (top-right). Discoverable for first-time viewers
     // who don't see the small bottom-right hint. Sits above letterbox bar.
@@ -8128,7 +8157,7 @@ class MonkIntroScene extends Phaser.Scene {
       .setOrigin(0, 0).setInteractive({ useHandCursor: true }).setDepth(72);
     skipHit.on('pointerover', () => { drawSkipBg(true); skipTxt.setColor('#ffffff'); });
     skipHit.on('pointerout',  () => { drawSkipBg(false); skipTxt.setColor('#ffe2a8'); });
-    skipHit.on('pointerdown', (p, lx, ly, ev) => { if (ev) ev.stopPropagation(); skip(); });
+    skipHit.on('pointerdown', (p, lx, ly, ev) => { if (ev) ev.stopPropagation(); skipAll(); });
 
     // Camera fade in
     this.cameras.main.fadeIn(700, 0, 0, 0);
@@ -8246,6 +8275,14 @@ class MonkIntroScene extends Phaser.Scene {
     this.cameras.main.fadeOut(600, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('TitleSplashScene'));
   }
+
+  _skipAll() {
+    if (this._ended) return;
+    this._ended = true;
+    this.tweens.killAll();
+    this.cameras.main.fadeOut(400, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Level1Scene'));
+  }
 }
 
 
@@ -8329,12 +8366,15 @@ class TitleSplashScene extends Phaser.Scene {
     };
 
     // === ADVANCE ===
+    // A tap on the title screen counts as "skip" — jump straight into gameplay
+    // instead of routing through the MenuScene/storybook sequence.
     this._advanced = false;
     const advance = () => {
       if (this._advanced) return;
       this._advanced = true;
       stopIntro();
-      this.scene.start('MenuScene');
+      this.cameras.main.fadeOut(300, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => this.scene.start('Level1Scene'));
     };
     // Small delay before accepting input so the fade-in actually plays
     this.time.delayedCall(800, () => {
