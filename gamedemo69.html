@@ -2,8 +2,87 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <title>Colors of the Moment Fade Away — Demo</title>
+<script>
+/* Global error reporter so on-device crashes are visible without devtools. */
+window.__lastError = null;
+window.onerror = function (msg, src, line, col, err) {
+  const text = '[ERR] ' + msg + ' @ ' + src + ':' + line + ':' + col;
+  window.__lastError = text;
+  try { console.error(text, err); } catch (e) {}
+};
+window.addEventListener('unhandledrejection', function (ev) {
+  window.__lastError = '[PROMISE] ' + (ev.reason && ev.reason.message ? ev.reason.message : ev.reason);
+});
+/* Block native scroll/zoom gestures so the page can't rubber-band on iOS. */
+(function () {
+  var stop = function (e) { if (e.cancelable) e.preventDefault(); };
+  document.addEventListener('touchmove',  stop, { passive: false });
+  document.addEventListener('gesturestart', stop, { passive: false });
+})();
+/* Reliable touch-device check that catches iPad-as-Mac (iPadOS 13+ reports a
+   Mac UA, so Phaser's game.device.os.desktop is true for it). Anything that
+   used to test !device.os.desktop should test window.__isTouchDevice() instead. */
+window.__isTouchDevice = function () {
+  if (typeof window.__isTouchDevice._cached === 'boolean') return window.__isTouchDevice._cached;
+  var game = window.__PHASER_GAME__ || window.__game || window.game;
+  var os = (game && game.device && game.device.os) || null;
+  var hasTouch = ('ontouchstart' in window) ||
+                 (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+                 (navigator.msMaxTouchPoints && navigator.msMaxTouchPoints > 0);
+  var ua = (navigator.userAgent || '').toLowerCase();
+  var isMacLike = ua.indexOf('mac') !== -1 || ua.indexOf('iphone') !== -1 || ua.indexOf('ipad') !== -1;
+  var ipadAsMac = isMacLike && (navigator.maxTouchPoints || 0) > 1;
+  var isMobileOS = !!(os && (os.iOS || os.android || os.iPhone || os.iPad));
+  var notDesktop = !!(os && !os.desktop);
+  // UA-based fallback for when Phaser's device detection hasn't booted yet:
+  // any clear iOS/Android UA, or any device with touch points + a mobile UA,
+  // is treated as a touch device.
+  var uaMobile = /android|iphone|ipad|ipod|mobile|tablet/.test(ua);
+  var result = !!(isMobileOS || ipadAsMac || (hasTouch && notDesktop) ||
+                  (hasTouch && uaMobile));
+  // Only cache if we had a real device check to work with — otherwise
+  // re-evaluate on the next call once Phaser has booted.
+  if (os) window.__isTouchDevice._cached = result;
+  return result;
+};
+/* One-shot audio context resume — iOS Safari starts the WebAudio context
+   suspended and won't play anything until the user interacts. We listen at
+   the window level so we catch the gesture regardless of which scene is up. */
+(function () {
+  var unlocked = false;
+  function unlock() {
+    if (unlocked) return;
+    unlocked = true;
+    try {
+      var g = window.game;
+      if (g && g.sound && g.sound.context && g.sound.context.state === 'suspended') {
+        var p = g.sound.context.resume();
+        if (p && p.catch) p.catch(function () {});
+      }
+    } catch (e) {}
+    /* Also nudge any registered tracks to begin (they ignore play() until unlocked) */
+    try {
+      var im = window.game && window.game.registry && window.game.registry.get('intro-music');
+      if (im && !im.isPlaying) { try { im.play(); } catch (e) {} }
+    } catch (e) {}
+    window.removeEventListener('touchstart', unlock, true);
+    window.removeEventListener('touchend',   unlock, true);
+    window.removeEventListener('mousedown',  unlock, true);
+    window.removeEventListener('pointerdown', unlock, true);
+    window.removeEventListener('keydown',    unlock, true);
+  }
+  window.addEventListener('touchstart', unlock, true);
+  window.addEventListener('touchend',   unlock, true);
+  window.addEventListener('mousedown',  unlock, true);
+  window.addEventListener('pointerdown', unlock, true);
+  window.addEventListener('keydown',    unlock, true);
+})();
+</script>
 <style>
 * {
   margin: 0;
@@ -22,6 +101,11 @@ html, body {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  /* Stop iOS rubber-banding when a finger drags on the canvas. */
+  overscroll-behavior: none;
+  position: fixed;
+  top: 0;
+  left: 0;
 }
 
 #game-container {
@@ -32,6 +116,11 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Stay clear of the iOS notch / home indicator so HUD + on-screen
+     buttons aren't clipped. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  touch-action: none;
   /* 3D scene root for the dive-through effect */
   perspective: 1600px;
   perspective-origin: 50% 45%;
@@ -45,6 +134,8 @@ html, body {
   transform-style: preserve-3d;
   will-change: transform, filter;
   transition: none;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Custom display font: Wedgie — leans back, perfect for the fake-3D dive title */
@@ -808,6 +899,15 @@ const _PLAYER_FIT_DEFAULTS = {
 window.__PLAYER_FIT__ = Object.assign({}, _PLAYER_FIT_DEFAULTS);
 window.__PHASER_GAME__ = null;
 function resizeGameToViewport(w, h) {
+  // The game's design size is fixed at GAME_WIDTH x GAME_HEIGHT and Phaser's
+  // Scale.FIT manager letterboxes it into whatever viewport is available.
+  // Calling game.scale.resize() actually *changes* the design size, which
+  // breaks every world coordinate the levels depend on, and earlier this
+  // function was throwing "Cannot set properties of undefined" on every
+  // load by running before the ScaleManager had finished booting.
+  //
+  // Keep the call site (Sandbox iframe still posts PLAYER_FIT messages here)
+  // but only touch the outer container CSS — Phaser handles the rest.
   const width = Math.max(1, Math.round(Number(w) || window.innerWidth || GAME_WIDTH));
   const height = Math.max(1, Math.round(Number(h) || window.innerHeight || GAME_HEIGHT));
   const container = document.getElementById('game-container');
@@ -815,15 +915,11 @@ function resizeGameToViewport(w, h) {
     container.style.width = width + 'px';
     container.style.height = height + 'px';
   }
-  const canvas = document.querySelector('#game-container canvas');
-  if (canvas) {
-    canvas.style.display = 'block';
-    canvas.style.width = width + 'px';
-    canvas.style.height = height + 'px';
-  }
+  // Don't size the canvas directly — Phaser's ScaleManager owns it. Also
+  // don't call game.scale.resize() — that mutates the design size.
   const game = window.__PHASER_GAME__ || window.__game;
-  if (game && game.scale && typeof game.scale.resize === 'function') {
-    game.scale.resize(width, height);
+  if (game && game.scale && game.isBooted && typeof game.scale.refresh === 'function') {
+    try { game.scale.refresh(); } catch (e) {}
   }
 }
 try {
@@ -5816,7 +5912,12 @@ class ColorSaturation {
 class TouchControls {
   constructor(scene) {
     this.scene = scene;
-    this.active = !scene.sys.game.device.os.desktop;
+    // Use the global helper so iPad-as-Mac (which reports desktop=true)
+    // still gets touch controls. Falls back to the old check if the
+    // helper isn't on the page for some reason.
+    this.active = (typeof window.__isTouchDevice === 'function')
+      ? window.__isTouchDevice()
+      : !scene.sys.game.device.os.desktop;
 
     // Direction state (snapped from analog stick)
     this.left = false;
@@ -7430,7 +7531,23 @@ class BootScene extends Phaser.Scene {
       targets: startText, alpha: 0.3, duration: 1000, yoyo: true, repeat: -1,
     });
 
-    this.input.once('pointerdown', () => this.scene.start('PreloadScene'));
+    const go = () => {
+      if (this._ready) return;
+      this._ready = true;
+      // Resume the WebAudio context now — this gesture is the user's first
+      // interaction, which iOS requires before any sound (or any video with
+      // audio) can play. Without this the village/boss intro videos load
+      // their audio track but the speakers stay silent.
+      try {
+        if (this.sound && this.sound.context && this.sound.context.state === 'suspended') {
+          var p = this.sound.context.resume();
+          if (p && p.catch) p.catch(function () {});
+        }
+      } catch (e) {}
+      this.scene.start('PreloadScene');
+    };
+    this.input.once('pointerdown', go);
+    this.input.keyboard.once('keydown', go);
 
     this._elapsed = 0;
     this._ready = false;
@@ -7849,8 +7966,18 @@ class VillageVideoScene extends Phaser.Scene {
   constructor() { super({ key: 'VillageVideoScene' }); }
 
   preload() {
-    // Load here (not in PreloadScene) so a missing file is a soft error only.
-    this.load.video('village-video', VILLAGE_VIDEO_PATH, true);
+    // Load with noAudio=false so the video's music track plays. Previously
+    // this was true, which made Phaser load the video muted — the intro
+    // played silently regardless of the device's volume.
+    // Wrapped in try/catch: if the browser can't decide on a video format,
+    // Phaser's loader throws synchronously inside the file-config builder.
+    // Letting that bubble would freeze the cinematic; falling back to the
+    // existing placeholder image is far better.
+    try { this.load.video('village-video', VILLAGE_VIDEO_PATH, false); }
+    catch (e) { console.warn('[VillageVideo] load.video threw:', e && e.message); }
+    this.load.on('loaderror', (f) => {
+      if (f && f.key === 'village-video') console.warn('[VillageVideo] video failed to load:', f.src);
+    });
   }
 
   create() {
@@ -7864,23 +7991,36 @@ class VillageVideoScene extends Phaser.Scene {
                      (this.cache && this.cache.video && this.cache.video.has('village-video'));
 
     if (hasVideo) {
-      // Scale video to fill the canvas width; then pan vertically.
-      const vid = this.add.video(W / 2, 0, 'village-video').setDepth(1);
+      // Scale video to COVER the canvas (no black bars on the sides or top)
+      // then pan vertically through whatever overflow that produces.
+      const vid = this.add.video(W / 2, H / 2, 'village-video').setDepth(1);
+      // Ensure the audio actually plays. Phaser sometimes leaves the
+      // underlying <video> muted when noAudio was true earlier in the
+      // session; explicitly turn it back on here.
+      try { vid.setMute(false); } catch (e) {}
+      try { vid.setVolume(1.0); } catch (e) {}
+      try { if (vid.video) { vid.video.muted = false; vid.video.volume = 1.0; vid.video.playsInline = true; } } catch (e) {}
       vid.play(true); // loop = true
-      // Wait one frame for natural size to resolve.
-      this.time.delayedCall(50, () => {
+      // iOS sometimes rejects the first play() if the AudioContext hasn't
+      // resumed yet — retry once on the next frame after the global gesture
+      // unlocker has had a chance to run.
+      this.time.delayedCall(60, () => {
+        try { vid.play(true); } catch (e) {}
         const vw = vid.width  || 1920;
         const vh = vid.height || 1080;
-        // Scale so video fills canvas width (or height, whichever is larger).
-        const scaleX = W / vw;
-        const scaleH = vh * scaleX;
-        vid.setScale(scaleX);
+        // Cover scale — whichever of width/height needs the bigger factor wins.
+        const scale = Math.max(W / vw, H / vh);
+        const scaleH = vh * scale;
+        const scaleW = vw * scale;
+        vid.setScale(scale);
 
-        // Clamp scaled height so it's at least as tall as the canvas.
         const panRange = Math.max(0, scaleH - H);
 
         // Start showing BOTTOM of video: position video so its bottom = canvas bottom.
         vid.setY(H - scaleH / 2);
+        // If the cover-scale leaves horizontal overflow (wide video), keep
+        // it centered so the framing isn't slammed against one edge.
+        vid.setX(W / 2);
 
         const PAN_DURATION = 12000; // ms to pan all the way to the top
         if (panRange > 0) {
@@ -7946,7 +8086,13 @@ class BossVideoScene extends Phaser.Scene {
   constructor() { super({ key: 'BossVideoScene' }); }
 
   preload() {
-    this.load.video('boss-video', BOSS_VIDEO_PATH, true);
+    // noAudio=false so the video's music track plays. Wrapped in try/catch
+    // to match VillageVideoScene's defensive pattern.
+    try { this.load.video('boss-video', BOSS_VIDEO_PATH, false); }
+    catch (e) { console.warn('[BossVideo] load.video threw:', e && e.message); }
+    this.load.on('loaderror', (f) => {
+      if (f && f.key === 'boss-video') console.warn('[BossVideo] video failed to load:', f.src);
+    });
   }
 
   create() {
@@ -7960,16 +8106,22 @@ class BossVideoScene extends Phaser.Scene {
                      (this.cache && this.cache.video && this.cache.video.has('boss-video'));
 
     if (hasVideo) {
-      const vid = this.add.video(W / 2, 0, 'boss-video').setDepth(1);
+      const vid = this.add.video(W / 2, H / 2, 'boss-video').setDepth(1);
+      try { vid.setMute(false); } catch (e) {}
+      try { vid.setVolume(1.0); } catch (e) {}
+      try { if (vid.video) { vid.video.muted = false; vid.video.volume = 1.0; vid.video.playsInline = true; } } catch (e) {}
       vid.play(true);
-      this.time.delayedCall(50, () => {
+      this.time.delayedCall(60, () => {
+        try { vid.play(true); } catch (e) {}
         const vw = vid.width  || 1920;
         const vh = vid.height || 1080;
-        const scaleX = W / vw;
-        const scaleH = vh * scaleX;
-        vid.setScale(scaleX);
+        // Cover scale — fill the canvas in both dimensions, no black bars.
+        const scale = Math.max(W / vw, H / vh);
+        const scaleH = vh * scale;
+        vid.setScale(scale);
         const panRange = Math.max(0, scaleH - H);
         vid.setY(H - scaleH / 2);
+        vid.setX(W / 2);
         const PAN_DURATION = 10000;
         if (panRange > 0) {
           this.tweens.add({
@@ -9157,7 +9309,9 @@ class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setAlpha(0).setDepth(10).setInteractive({ useHandCursor: true });
 
     // Controls text — under the book (only on last page)
-    const isDesktop = this.sys.game.device.os.desktop;
+    const isDesktop = (typeof window.__isTouchDevice === 'function')
+      ? !window.__isTouchDevice()
+      : this.sys.game.device.os.desktop;
     const controlsStr = isDesktop
       ? 'Arrows/WASD: Move  ·  Space: Jump (x2)  ·  Shift: Sprint\nZ: Shoot  ·  X: Backstep  ·  TAB/Q: Switch Weapon'
       : 'Touch controls on screen';
@@ -16949,7 +17103,9 @@ class HUDScene extends Phaser.Scene {
     });
 
     // --- Controls hint — smaller, fades sooner so it doesn't crowd play area ---
-    const isDesktop = this.sys.game.device.os.desktop;
+    const isDesktop = (typeof window.__isTouchDevice === 'function')
+      ? !window.__isTouchDevice()
+      : this.sys.game.device.os.desktop;
     const hintText = isDesktop
       ? 'WASD/Arrows · Space jump (×2) · Shift sprint · Z shoot · X backstep/parry · Q switch'
       : 'Touch controls below';
@@ -18607,6 +18763,7 @@ const config = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    expandParent: true,
   },
   physics: {
     default: 'arcade',
@@ -18649,8 +18806,21 @@ const config = {
   ],
   input: {
     activePointers: 3, // Support multi-touch for mobile controls
+    touch: { capture: true },
   },
 };
+
+/* Refresh the scaler on orientation change — Safari occasionally lags
+   Phaser's own resize listener so we kick it explicitly. */
+window.addEventListener('orientationchange', function () {
+  setTimeout(function () {
+    try {
+      if (window.game && window.game.scale && window.game.scale.refresh) {
+        window.game.scale.refresh();
+      }
+    } catch (e) {}
+  }, 60);
+});
 
 // ⚡ One-shot stale-cache purge. The sheet layout changed from 4×6 / 256px
 // to 8×8 / 240px with col-0 labels. Old localStorage frame indices and

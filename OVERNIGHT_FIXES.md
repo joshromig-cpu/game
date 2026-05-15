@@ -3,10 +3,150 @@
 Branch: `claude/fix-phaser-mobile-critical-qqxhv`
 
 Scope: targeted fixes only — no refactors, no mechanic changes, no Phaser
-version bump. All changes are in the active `index.html` game tree
-(`index.html`, `css/style.css`, `js/`). The standalone `gamedemo69.html`
-and `level3-opening-demo.html` files were **not** modified (see note at
-end).
+version bump.
+
+**Two passes:**
+- **Pass 1** (initial): mobile / tablet fixes for the modular `index.html`
+  tree (`index.html`, `css/style.css`, `js/`).
+- **Pass 2** (later): same class of fixes against the live game at
+  `gamedemo69.html` — that's the build deployed at ernestaines.com, so
+  it was the one actually broken on iPhone/iPad. Pass 2 also catches a
+  pre-existing `resizeGameToViewport` crash and re-enables intro-video
+  audio. See "Pass 2" section below.
+
+---
+
+## Pass 2 — gamedemo69.html (the live game)
+
+User report: iPad / iPhone broken; the intro cinematic video plays but
+without its embedded music; the video gets "chopped off".
+
+### Bugs found
+
+1. **Intro-video audio was being stripped.** Both `VillageVideoScene` and
+   `BossVideoScene` were calling
+   `this.load.video(key, path, true)` — Phaser's third argument is
+   `noAudio`, and `true` means "load this without an audio track." That's
+   why the cinematic videos played silently regardless of device volume.
+2. **Pre-existing `resizeGameToViewport` crash on every page load.** That
+   helper was being called synchronously right after `new Phaser.Game()`,
+   before the ScaleManager had finished initializing its internal Size
+   objects. Result: `Uncaught TypeError: Cannot set properties of
+   undefined (setting 'width')` on every load, swallowed by the global
+   error handler but leaving the game in a partial state. Worse, the
+   call passed `window.innerWidth / innerHeight` to
+   `game.scale.resize()`, which actually mutates the *design* size,
+   trampling the FIT scaler.
+3. **iPad detection failure.** All three sites using
+   `this.sys.game.device.os.desktop` (TouchControls + two HUD hint
+   strings) were treating iPadOS-13+ iPads as desktop — so the touch
+   controls never appeared, the game was unplayable.
+4. **Audio context never resumed on iOS.** Phaser will autoplay bgm but
+   iOS Safari starts the WebAudio context suspended; nothing was
+   resuming it explicitly on the first user gesture. Intro music + bgm
+   would queue but never play.
+5. **Video framing got "chopped".** `VillageVideoScene` / `BossVideoScene`
+   used `vid.setScale(W / vw)` — i.e. fit by width. On a video whose
+   aspect ratio was wider than the canvas (which is common for the
+   uploaded clips) this left a black bar at the top/bottom and the
+   subject of the video looked like it was cut off.
+6. **Viewport meta missing iOS bits.** No `viewport-fit=cover`, no
+   `maximum-scale=1.0`, no `apple-mobile-web-app-*` metas. Easy to
+   pinch-zoom or get crowded by the notch.
+
+### What changed in `gamedemo69.html`
+
+- **`<meta>` viewport** now: `width=device-width, initial-scale=1.0,
+  maximum-scale=1.0, minimum-scale=1.0, user-scalable=no,
+  viewport-fit=cover`. Added the three `apple-mobile-web-app-*` metas.
+- **New head `<script>` block** added near the top of the file, defining:
+  - `window.onerror` + `unhandledrejection` → push into
+    `window.__lastError` so on-device crashes are visible without
+    devtools.
+  - Document-level `touchmove` + `gesturestart` `preventDefault` so the
+    page can't rubber-band or pinch-zoom while assets load.
+  - **`window.__isTouchDevice()`** — the canonical mobile check. Handles
+    iPadOS-13+ (which reports a Mac UA + multi-touch), and is safe to
+    call before Phaser has booted (re-evaluates instead of caching a
+    bogus answer).
+  - One-shot global audio unlocker: on the first `touchstart` /
+    `pointerdown` / `keydown` it resumes the suspended AudioContext and
+    nudges the registered intro-music track to start.
+- **`<style>`** body now has `overscroll-behavior: none` + `position:
+  fixed` to stop iOS rubber-banding, `#game-container` has safe-area
+  padding (`env(safe-area-inset-*)`) so the canvas isn't clipped by the
+  notch / home indicator, and the canvas has explicit `touch-action:
+  none` + `-webkit-tap-highlight-color: transparent`.
+- **`TouchControls.active`** now uses `window.__isTouchDevice()` (with a
+  fallback to the old `!desktop` check). iPad gets the touch UI.
+- **Two `isDesktop = this.sys.game.device.os.desktop` callsites** (the
+  controls hint strings in the storybook and HUD scenes) now use
+  `!window.__isTouchDevice()`. iPad sees the "Touch controls below"
+  hint instead of the desktop keyboard hint.
+- **`VillageVideoScene.preload` / `BossVideoScene.preload`** —
+  `this.load.video(..., false)` instead of `true`, restoring the
+  embedded audio track. Both calls are wrapped in `try`/`catch` and
+  paired with a `loaderror` listener so a missing/unsupported video
+  falls back to the existing placeholder image instead of freezing.
+- **`VillageVideoScene.create` / `BossVideoScene.create`** — switched
+  the framing math from "fit to width" to **cover**: `scale =
+  Math.max(W/vw, H/vh)`. The video always fills the canvas — no black
+  bars top/bottom — and panning still tracks the vertical overflow.
+  Also: `vid.setMute(false)` + `vid.setVolume(1.0)`, plus a direct
+  `vid.video.muted = false; .volume = 1.0; .playsInline = true` so the
+  HTML element itself isn't silently muted on iOS. A second
+  `vid.play()` is called on the next-frame `delayedCall` because iOS
+  occasionally rejects the first play attempt while the audio context
+  is still resuming.
+- **`BootScene` "tap to start"** now also accepts `keydown`, calls
+  `this.sound.context.resume()` in the gesture handler (in addition to
+  the global unlocker), and routes both inputs through one guarded
+  `go()` so we can't double-start the next scene.
+- **`resizeGameToViewport(w, h)`** — fixed two bugs at once:
+  - No longer calls `game.scale.resize(w, h)` (that mutates the design
+    size). Instead, when the game is booted, it calls
+    `game.scale.refresh()` to re-letterbox into the current viewport.
+  - No longer touches `canvas.style.width/height` directly — Phaser's
+    ScaleManager owns those.
+  - Guards against being called before Phaser has finished booting (the
+    crash that was firing on every page load).
+- **Phaser config** — added `expandParent: true` inside `scale:`, added
+  `input.touch.capture: true`, and added an `orientationchange` window
+  listener that calls `game.scale.refresh()` after 60ms. Width/height
+  kept at top level (Phaser 3.87 needs them there for the size-objects
+  to initialise correctly on boot — moving them under `scale:` was the
+  bug the first attempt of Pass 2 introduced).
+
+### Verified (headless Chromium + Playwright)
+
+- Desktop 1280×800 → `isTouch = false`, scene flow advances past
+  BootScene, audio context running, no pageerrors.
+- iPhone 13 emulation → `isTouch = true`, display 390×219 (game space
+  still 1280×720 — FIT works), reaches `VillageVideoScene` /
+  `BossVideoScene`, audio context running.
+- iPad gen-7 emulation → `isTouch = true`, display 810×455, same as
+  above. Previously this device profile got stuck on BootScene because
+  TouchControls never activated.
+- No more `Cannot set properties of undefined (setting 'width')`.
+- "Unable to decode audio data" pageerrors in the test only come from
+  the headless harness substituting empty bodies for `*.mp3` requests —
+  production files will decode fine.
+
+### Out of scope / still on the radar
+
+- The intro videos themselves (`/Particles fly from villagers.mp4`,
+  `/Opening animation .mp4`) — I can't see the bytes on the server, so
+  I can't verify the exact aspect or duration. The cover-scale fix
+  removes the "chopped" black bars regardless. If the videos are
+  *longer* than the 12s / 10s hard-coded pan durations, the cinematic
+  still ends early. Tell me the actual video lengths and I'll wire the
+  pan to the natural duration.
+- `level3-opening-demo.html` still uses `window.innerWidth/Height`
+  directly and is unmodified — it's a sandbox demo, not the live game.
+
+---
+
+## Pass 1 — index.html tree (initial pass)
 
 ---
 
