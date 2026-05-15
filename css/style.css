@@ -13,6 +13,12 @@ html, body {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  /* Prevent iOS rubber-banding when scrolling at edges */
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: auto;
+  position: fixed;
+  top: 0;
+  left: 0;
 }
 
 #game-container {
@@ -21,10 +27,17 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Use safe-area-insets so notch/home-indicator don't clip the canvas */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  touch-action: none;
 }
 
 #game-container canvas {
   display: block;
   max-width: 100%;
   max-height: 100%;
+  /* Belt-and-braces: ensure the canvas itself never tries to handle scroll */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }

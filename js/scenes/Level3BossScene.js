@@ -86,6 +86,11 @@ class Level3BossScene extends Phaser.Scene {
     this.mirrorKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
     this.blastKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
 
+    // Touch controls — boss fight is reachable via debug warp; without this
+    // wiring it was unplayable on mobile.
+    this.touchControls = new TouchControls(this);
+    this._buildBossTouchExtras();
+
     // ---------- Heart bullets ----------
     this.heartBullets = [];
 
@@ -107,6 +112,34 @@ class Level3BossScene extends Phaser.Scene {
     // ---------- Phase tracking ----------
     this.phase = 'intro'; // intro, p1, p2, p3, outro
     this.lastTauntAt = 0;
+
+    if (window.DebugOverlay) DebugOverlay.attach(this);
+  }
+
+  _buildBossTouchExtras() {
+    if (!this.touchControls || !this.touchControls.active) return;
+    const cam = this.cameras.main;
+    const w = cam.width;
+    const h = cam.height;
+    // Mirror (Q) — top of right cluster
+    this.btnMirror = this.add.circle(w - 50, h - 220, 28, 0xcfe8ff, 0.4)
+      .setScrollFactor(0).setDepth(1001).setInteractive();
+    this.add.text(w - 50, h - 220, 'M', {
+      fontFamily: 'sans-serif', fontSize: '13px', color: '#ffffff',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+    // Blast (E) — below mirror
+    this.btnBlast = this.add.circle(w - 50, h - 160, 28, 0xff6ea6, 0.4)
+      .setScrollFactor(0).setDepth(1001).setInteractive();
+    this.add.text(w - 50, h - 160, '♥!', {
+      fontFamily: 'sans-serif', fontSize: '13px', color: '#ffffff',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+
+    this._mirrorTouchHeld = false;
+    this._blastTouchEdge  = false;
+    this.btnMirror.on('pointerdown', () => { this._mirrorTouchHeld = true; });
+    this.btnMirror.on('pointerup',   () => { this._mirrorTouchHeld = false; });
+    this.btnMirror.on('pointerout',  () => { this._mirrorTouchHeld = false; });
+    this.btnBlast.on('pointerdown',  () => { this._blastTouchEdge  = true; });
   }
 
   // ==================================================================
@@ -492,6 +525,14 @@ class Level3BossScene extends Phaser.Scene {
   // UPDATE
   // ==================================================================
   update(time, delta) {
+    try { this._update(time, delta); }
+    catch (err) {
+      window.__lastError = `[Level3 update] ${err && err.message ? err.message : err}`;
+      console.error('Level3BossScene update crashed:', err);
+    }
+  }
+
+  _update(time, delta) {
     const dt = delta / 1000;
 
     // Drift clocks + particles
@@ -516,17 +557,20 @@ class Level3BossScene extends Phaser.Scene {
       backstep: this.cursors.backstep,
       shoot: this.cursors.shoot,
     };
-    this.player.update(merged, null);
+    if (this.touchControls) this.touchControls.update();
+    const touch = (this.touchControls && this.touchControls.active) ? this.touchControls : null;
+    this.player.update(merged, touch);
 
-    // Mirror toggle
-    const mirrorHeld = this.mirrorKey.isDown;
+    // Mirror toggle (keyboard hold OR touch hold)
+    const mirrorHeld = this.mirrorKey.isDown || !!this._mirrorTouchHeld;
     this.player.setMirrorActive(mirrorHeld);
     this.player.drawMirrorShield(30, 0);
 
-    // Heart blast
-    if (Phaser.Input.Keyboard.JustDown(this.blastKey)) {
+    // Heart blast — keyboard edge OR touch edge.
+    if (Phaser.Input.Keyboard.JustDown(this.blastKey) || this._blastTouchEdge) {
       this._fireHeartBlast();
     }
+    this._blastTouchEdge = false;
 
     // Bullets
     for (let i = this.heartBullets.length - 1; i >= 0; i--) {

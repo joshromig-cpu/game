@@ -178,6 +178,9 @@ class Level1Scene extends Phaser.Scene {
       // Core
       const coin = this.add.circle(cx, cy, 9, COLORS.COIN, 1);
       coin.setStrokeStyle(2, 0xffffff, 0.5);
+      // Pair the glow to the coin so we can destroy it on collect — without
+      // this the glow circles stayed on-screen and built up over time.
+      coin._glow = glow;
       this.physics.add.existing(coin, true);
       this.coins.add(coin);
 
@@ -197,10 +200,12 @@ class Level1Scene extends Phaser.Scene {
     this.physics.add.collider(this.player.sprite, this.platforms);
 
     this.physics.add.overlap(this.player.sprite, this.coins, (player, coin) => {
+      const gx = coin.x, gy = coin.y;
+      if (coin._glow && coin._glow.active) coin._glow.destroy();
       coin.destroy();
       this.coinCount++;
       this.events.emit('coinCollected', this.coinCount);
-      this._coinBurst(coin.x, coin.y);
+      this._coinBurst(gx, gy);
     });
 
     // --- Heart projectiles (manually moved — no physics group needed) ---
@@ -245,14 +250,29 @@ class Level1Scene extends Phaser.Scene {
     this.touchControls = new TouchControls(this);
 
     // --- HUD ---
+    // Make sure no stale HUD instance is alive (debug warps to L3 stop it).
+    if (this.scene.isActive('HUDScene')) this.scene.stop('HUDScene');
     this.scene.launch('HUDScene');
+    // Emit initial values AFTER the HUD scene has had a chance to subscribe.
+    // The event payload is replayed inside the HUD scene's create().
     this.events.emit('coinCollected', 0);
+    this.events.emit('playerHpChanged', this.player.hp, this.player.maxHp);
 
     // --- Ambient floating particles (pollen / light motes) ---
     this._createAmbientParticles();
+
+    if (window.DebugOverlay) DebugOverlay.attach(this);
   }
 
   update(time, delta) {
+    try { this._update(time, delta); }
+    catch (err) {
+      window.__lastError = `[Level1 update] ${err && err.message ? err.message : err}`;
+      console.error('Level1Scene update crashed:', err);
+    }
+  }
+
+  _update(time, delta) {
     const mergedCursors = {
       left: { isDown: this.cursors.left.isDown || this.wasd.left.isDown },
       right: { isDown: this.cursors.right.isDown || this.wasd.right.isDown },
