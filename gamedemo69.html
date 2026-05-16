@@ -8005,6 +8005,10 @@ class VillageVideoScene extends Phaser.Scene {
       // resumed yet — retry once on the next frame after the global gesture
       // unlocker has had a chance to run.
       this.time.delayedCall(60, () => {
+        // Guard against the player having already tapped skip in the first
+        // 60ms — the scene is then mid-fade-out and we don't want to spawn
+        // a fresh 12s pan tween on a dying scene.
+        if (this._ended) return;
         try { vid.play(true); } catch (e) {}
         const vw = vid.width  || 1920;
         const vh = vid.height || 1080;
@@ -8112,6 +8116,10 @@ class BossVideoScene extends Phaser.Scene {
       try { if (vid.video) { vid.video.muted = false; vid.video.volume = 1.0; vid.video.playsInline = true; } } catch (e) {}
       vid.play(true);
       this.time.delayedCall(60, () => {
+        // Guard against the player having already tapped skip in the first
+        // 60ms — the scene is then mid-fade-out and we don't want to spawn
+        // a fresh 12s pan tween on a dying scene.
+        if (this._ended) return;
         try { vid.play(true); } catch (e) {}
         const vw = vid.width  || 1920;
         const vh = vid.height || 1080;
@@ -9307,6 +9315,17 @@ class MenuScene extends Phaser.Scene {
       stroke: '#0a0a12',
       strokeThickness: 4,
     }).setOrigin(0.5).setAlpha(0).setDepth(10).setInteractive({ useHandCursor: true });
+    // Enlarge the tap area for thumbs — the text's own bounds are too small
+    // on iPhone portrait (~180×30 scene-coords letterbox to ~55×9 actual px).
+    // The button's pointerdown handler is added below; this transparent zone
+    // forwards taps to it.
+    this.continueHitZone = this.add.zone(rcx, pageY + pageH - 35, 320, 80)
+      .setOrigin(0.5).setDepth(9).setInteractive({ useHandCursor: true });
+    this.continueHitZone.on('pointerdown', (pointer, lx, ly, event) => {
+      // Re-fire on the text so all the existing logic (page advance / start
+      // game) runs unchanged.
+      this.continueText.emit('pointerdown', pointer, lx, ly, event);
+    });
 
     // Controls text — under the book (only on last page)
     const isDesktop = (typeof window.__isTouchDevice === 'function')
@@ -10256,6 +10275,21 @@ class MenuScene extends Phaser.Scene {
     cineLabel.on('pointerdown', skipCine);
     this.input.keyboard.on('keydown-SPACE', skipCine);
     this.input.keyboard.on('keydown-ENTER', skipCine);
+    // On mobile the tiny "Skip Intro" text in the bottom-right corner sits
+    // inside the iOS home-indicator gesture zone and is hard to hit. Mirror
+    // what VillageVideoScene/MonkIntroScene do and accept any tap to skip
+    // while the cinematic is playing.
+    const sceneSkip = (pointer) => {
+      if (this.cineActive) skipCine();
+    };
+    this.input.on('pointerdown', sceneSkip);
+    // Remove the global handler once the cinematic ends so it doesn't
+    // swallow other taps later in MenuScene.
+    const removeSceneSkip = () => {
+      this.input.off('pointerdown', sceneSkip);
+      this.time.delayedCall(0, () => {}); // no-op
+    };
+    this.time.delayedCall(CINE_DURATION + 300, removeSceneSkip);
 
     // === ANIMATE MENU IN (after cinematic) ===
     // If the player has seen the intro before, skip the cinematic immediately and bring up the storybook.
