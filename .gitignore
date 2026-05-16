@@ -1,0 +1,7 @@
+# Test-time artifacts (downloaded Phaser, scratch HTML harnesses, etc.)
+.phaser-test.js
+.test-*.html
+
+# OS / editor cruft
+.DS_Store
+*.swp
